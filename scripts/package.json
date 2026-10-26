@@ -1,0 +1,1 @@
+{"name":"@aba/scripts","private":true,"type":"module","dependencies":{"@aba/config":"workspace:*","@aba/core":"workspace:*","bcryptjs":"^3.0.3","otplib":"^13.5.0","pg":"^8.23.1"}}
