@@ -80,7 +80,7 @@ export const POST = api<P>(
   const j = (await body<Record<string, unknown>>(req).catch(() => ({}))) as Record<string, unknown>;
   switch (a) {
     case "fields":
-      return plans.saveFieldEdits(svc, id, z.record(z.unknown()).parse(j.edits) as never, typeof j.summary === "string" ? j.summary : undefined);
+      return plans.saveFieldEdits(svc, id, z.record(z.string(), z.unknown()).parse(j.edits) as never, typeof j.summary === "string" ? j.summary : undefined);
     case "restore":
       return { version: await plans.restoreVersion(svc, id, Number(j.version)) };
     case "files":

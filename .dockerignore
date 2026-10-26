@@ -1,0 +1,8 @@
+**/node_modules
+**/.next
+**/cdk.out
+.git
+**/.localdata
+fixtures/out
+**/*.log
+.env*

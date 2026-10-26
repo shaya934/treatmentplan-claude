@@ -18,7 +18,7 @@ export const AnswerAssessment = z.object({
 });
 export type AnswerAssessment = z.infer<typeof AnswerAssessment>;
 
-const CellRow = z.record(z.string());
+const CellRow = z.record(z.string(), z.string());
 export const FieldValueOut = z.union([z.string(), z.array(CellRow), z.boolean(), z.array(z.string())]);
 
 export const SectionOutput = z.object({
@@ -63,7 +63,7 @@ export const TemplateOp = z.object({
   after_field_id: z.string().optional(),
   rule_id: z.string().optional(),
   /** Partial field / section / rule / branding object as JSON. */
-  data: z.record(z.unknown()).optional(),
+  data: z.record(z.string(), z.unknown()).optional(),
 });
 export type TemplateOp = z.infer<typeof TemplateOp>;
 export const TemplateDiffOutput = z.object({ ops: z.array(TemplateOp), summary: z.string() });
@@ -74,7 +74,7 @@ export const DocxTemplateOutput = z.object({
     z.object({
       id: z.string(),
       title: z.string(),
-      fields: z.array(z.record(z.unknown())),
+      fields: z.array(z.record(z.string(), z.unknown())),
     }),
   ),
 });

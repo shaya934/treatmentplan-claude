@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import pg from "pg";
@@ -22,15 +23,18 @@ let pool: pg.Pool | null = null;
 export function getPool(): pg.Pool {
   if (!pool) {
     const url = env().databaseUrl;
-    pool = new pg.Pool({
-      connectionString: url,
-      max: Number(process.env.DB_POOL_MAX ?? 10),
-      ssl: env().mode === "aws" ? { rejectUnauthorized: true, ca: process.env.RDS_CA_BUNDLE } : undefined,
-    });
+    pool = new pg.Pool({ connectionString: url, max: Number(process.env.DB_POOL_MAX ?? 10), ssl: rdsSsl() });
     // Dates come back as 'YYYY-MM-DD' strings, never shifted by timezone.
     pg.types.setTypeParser(1082, (v) => v);
   }
   return pool;
+}
+
+/** TLS to RDS, verified against the RDS CA bundle baked into the image. */
+export function rdsSsl(): pg.ClientConfig["ssl"] {
+  if (env().mode !== "aws") return undefined;
+  const file = process.env.RDS_CA_FILE;
+  return { rejectUnauthorized: true, ca: file ? readFileSync(file, "utf8") : undefined };
 }
 
 export async function closePool() {
@@ -71,8 +75,8 @@ export async function many<T = Record<string, unknown>>(tx: Tx, sql: string, par
 }
 
 /** Apply SQL migrations in order, as the schema owner. */
-export async function migrate(ownerUrl: string, dir = join(import.meta.dirname, "..", "migrations")) {
-  const client = new pg.Client({ connectionString: ownerUrl });
+export async function migrate(ownerUrl: string, dir = join(import.meta.dirname, "..", "migrations"), ssl?: pg.ClientConfig["ssl"]) {
+  const client = new pg.Client({ connectionString: ownerUrl, ssl });
   await client.connect();
   try {
     await client.query("CREATE TABLE IF NOT EXISTS schema_migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())");

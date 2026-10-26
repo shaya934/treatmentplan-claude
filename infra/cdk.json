@@ -1,0 +1,18 @@
+{
+  "app": "npx tsx bin/app.ts",
+  "context": {
+    "aba:dev": {
+      "domainName": "dev.REPLACE-ME.example",
+      "alarmEmail": "REPLACE-ME@example.com"
+    },
+    "aba:prod": {
+      "domainName": "app.REPLACE-ME.example",
+      "alarmEmail": "REPLACE-ME@example.com"
+    },
+    "@aws-cdk/aws-iam:minimizePolicies": true,
+    "@aws-cdk/core:target-partitions": [
+      "aws"
+    ],
+    "@aws-cdk/core:defaultCrossStackReferences": "strong"
+  }
+}

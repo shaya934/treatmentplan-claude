@@ -1,0 +1,46 @@
+name: ci
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Create database roles (synthetic data only)
+        run: |
+          psql -h localhost -U postgres -c "CREATE ROLE aba_owner LOGIN PASSWORD 'aba_owner_local'"
+          psql -h localhost -U postgres -c "CREATE ROLE aba_app LOGIN PASSWORD 'aba_app_local' NOBYPASSRLS"
+          psql -h localhost -U postgres -c "CREATE DATABASE aba_test OWNER aba_owner"
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libreoffice-writer-nogui
+      - run: pnpm -r typecheck
+      - run: pnpm test
+      - name: Dependency vulnerability scan
+        run: pnpm audit --audit-level high
+      - name: CDK synth (dev + prod)
+        run: pnpm --filter @aba/infra synth
+        env:
+          CDK_DEFAULT_ACCOUNT: "111111111111"
+          CDK_DEFAULT_REGION: us-east-1
+      - name: Web build
+        run: pnpm --filter @aba/web build

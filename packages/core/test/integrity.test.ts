@@ -93,3 +93,15 @@ describe("model configuration", () => {
     expect(APPROVED_MODEL_IDS.some((id) => /fable|mythos/i.test(id))).toBe(false);
   });
 });
+
+describe("Bedrock tool schemas", () => {
+  it("every structured-output schema converts to a JSON schema for tool use", async () => {
+    const { z } = await import("zod");
+    const S = await import("../src/ai/schemas");
+    for (const schema of [S.ExtractionOutput, S.AnswerAssessment, S.SectionOutput, S.ReviewOutput, S.EditOutput, S.TemplateDiffOutput, S.DocxTemplateOutput]) {
+      const js = z.toJSONSchema(schema, { target: "draft-7", io: "input", unrepresentable: "any" }) as { type: string; properties: object };
+      expect(js.type).toBe("object");
+      expect(Object.keys(js.properties).length).toBeGreaterThan(0);
+    }
+  });
+});

@@ -36,7 +36,14 @@ export function env(): AppEnv {
   cached = {
     mode,
     region: process.env.AWS_REGION ?? "us-east-1",
-    databaseUrl: required("DATABASE_URL", mode === "local" ? "postgres://aba_app:aba_app_local@127.0.0.1:5432/aba" : undefined),
+    databaseUrl: required(
+      "DATABASE_URL",
+      process.env.DB_HOST
+        ? `postgres://aba_app:${encodeURIComponent(process.env.DB_APP_PASSWORD ?? "")}@${process.env.DB_HOST}:${process.env.DB_PORT ?? 5432}/${process.env.DB_NAME ?? "aba"}`
+        : mode === "local"
+          ? "postgres://aba_app:aba_app_local@127.0.0.1:5432/aba"
+          : undefined,
+    ),
     sessionSecret: required("SESSION_SECRET", mode === "local" ? "local-dev-only-session-secret-change-me-0123456789" : undefined),
     sessionIdleMinutes: Number(process.env.SESSION_IDLE_MINUTES ?? 15),
     bucket: process.env.FILES_BUCKET ?? "",

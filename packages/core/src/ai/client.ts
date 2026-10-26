@@ -1,6 +1,5 @@
 import { BedrockRuntimeClient, ConverseCommand, type ContentBlock, type SystemContentBlock } from "@aws-sdk/client-bedrock-runtime";
-import type { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
+import { z } from "zod";
 import { estimateCost, modelFor, type AiStep, type ModelKey } from "@aba/config/models";
 import { env } from "../env";
 import { log, SafeError } from "../logger";
@@ -74,7 +73,7 @@ export class BedrockAiClient implements AiClient {
 
   async structured<T>(req: StructuredRequest<T>): Promise<T> {
     const { key, id } = modelFor(req.step, { complexCase: req.ctx.complexCase });
-    const jsonSchema = zodToJsonSchema(req.schema, { target: "jsonSchema7", $refStrategy: "none" }) as Record<string, unknown>;
+    const jsonSchema = z.toJSONSchema(req.schema, { target: "draft-7", io: "input", unrepresentable: "any" }) as Record<string, unknown>;
     delete jsonSchema.$schema;
     const system: SystemContentBlock[] = [{ text: req.system }];
     if (req.cachedContext) system.push({ text: req.cachedContext });

@@ -155,7 +155,7 @@ export const Rule = z.discriminatedUnion("kind", [
     percentColumn: z.string(),
     justificationColumn: z.string(),
     disallowed: z.array(z.string()),
-    caps: z.record(z.number()),
+    caps: z.record(z.string(), z.number()),
     /** Also scan a services table location column for "telehealth" on disallowed codes. */
     locationField: z.string().optional(),
     locationColumn: z.string().optional(),
