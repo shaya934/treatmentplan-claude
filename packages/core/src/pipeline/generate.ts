@@ -2,7 +2,7 @@ import { ai, type AiContext } from "../ai/client";
 import { narrativeSystem, REVIEW_SYSTEM } from "../ai/prompts";
 import { ReviewOutput, SectionOutput } from "../ai/schemas";
 import { checkGroup, linkGroups } from "../plan/consistency";
-import { findPlaceholders, isEmptyValue, placeholder, PLACEHOLDER_RE, valueToText, type FieldEntry, type FieldValue, type PlanContent, type TableRow } from "../plan/content";
+import { findPlaceholders, HAS_PLACEHOLDER, isEmptyValue, placeholder, PLACEHOLDER_RE, valueToText, type FieldEntry, type FieldValue, type PlanContent, type TableRow } from "../plan/content";
 import type { Field, Section, Template } from "../template/schema";
 import { findField, guidedQuestions } from "../template/schema";
 import { firstName, type BcbaAnswer, type ClientRecord, type Evidence, type ReviewItem } from "../types";
@@ -70,7 +70,7 @@ function normalizeValue(f: Field, v: unknown, current: FieldValue): FieldValue {
   if (f.type === "boolean") return typeof v === "boolean" ? v : current;
   if (f.type === "multiselect") return Array.isArray(v) ? (v as string[]).filter((x) => typeof x === "string" && (!f.options || f.options.includes(x))) : current;
   if (typeof v !== "string") return current;
-  if (f.type === "select" && f.options && !f.options.includes(v) && !PLACEHOLDER_RE.test(v)) return placeholder(f.label);
+  if (f.type === "select" && f.options && !f.options.includes(v) && !HAS_PLACEHOLDER.test(v)) return placeholder(f.label);
   return v;
 }
 
@@ -118,8 +118,7 @@ export async function generateSection(
     const sentenceSources = (o.sentences ?? []).map((s) => ({ sentence: s.text, sources: s.sources.filter((x) => validSources.has(x)) }));
     const sources = Array.from(new Set(sentenceSources.flatMap((s) => s.sources)));
     const text = valueToText(value);
-    const status = PLACEHOLDER_RE.test(text) || isEmptyValue(f, value) ? "needs_bcba" : sources.some((s) => s.startsWith("bcba_answer")) ? "complete" : "prefilled";
-    PLACEHOLDER_RE.lastIndex = 0;
+    const status = HAS_PLACEHOLDER.test(text) || isEmptyValue(f, value) ? "needs_bcba" : sources.some((s) => s.startsWith("bcba_answer")) ? "complete" : "prefilled";
     updates[f.id] = { value, status, sources, sentenceSources };
   }
   // Required fields the model skipped become visible placeholders, never silent blanks.
@@ -133,11 +132,11 @@ export async function generateSection(
 export function emptyPlaceholder(f: Field, current: FieldValue): FieldValue {
   if (f.type === "boolean" || f.type === "multiselect") return current;
   if (f.type === "table") {
+    // Fixed-row tables (codes, days, phases) keep their structure; the empty-required
+    // check and the field's "Needs BCBA" status flag them instead of a stray cell placeholder.
+    if (f.fixedRows?.length) return current;
     const cols = f.columns!.map((c) => c.id);
-    const rows = Array.isArray(current) && current.length ? (current as TableRow[]).map((r) => ({ ...r })) : [{ [cols[0]!]: "" }];
-    const target = f.fixedRows ? cols[1]! : cols[0]!;
-    rows[0]![target] = placeholder(f.label);
-    return rows;
+    return [{ ...Object.fromEntries(cols.map((c) => [c, ""])), [cols[0]!]: placeholder(f.label) }];
   }
   return placeholder(f.label);
 }

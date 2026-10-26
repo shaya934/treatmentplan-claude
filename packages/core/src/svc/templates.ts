@@ -47,15 +47,20 @@ export async function getTemplateVersion(s: Svc, versionId: string): Promise<Tem
 }
 
 /** Admin chat: plain-language request -> structured diff + preview. Nothing changes until publish. */
-export async function templateChat(s: Svc, request: string, baseVersionId?: string): Promise<TemplateProposal & { messageId: string; baseVersionId: string }> {
+export async function templateChat(
+  s: Svc,
+  request: string,
+  opts: { baseVersionId?: string; baseTemplate?: unknown } = {},
+): Promise<TemplateProposal & { messageId: string; baseVersionId: string }> {
   const { base, templateId, baseId } = await tx(s, async (t) => {
     assertCan(s.p, "template.edit");
     const c = await currentTemplate(t);
-    const baseId = baseVersionId ?? c.current_version_id;
+    const baseId = opts.baseVersionId ?? c.current_version_id;
     const b = await one<{ schema_json: unknown }>(t, "SELECT schema_json FROM template_versions WHERE id = $1 AND template_id = $2", [baseId, c.id]);
     if (!b) throw new SafeError("Base version not found", 404);
     await t.query("INSERT INTO chat_messages (tenant_id, template_id, channel, role, content, created_by) VALUES (app_tenant(),$1,'template','user',$2,$3)", [c.id, request, s.p.userId]);
-    return { base: parseTemplate(b.schema_json), templateId: c.id, baseId };
+    // An unpublished working draft (several chat changes before one publish) can be the base.
+    return { base: opts.baseTemplate ? parseTemplate(opts.baseTemplate) : parseTemplate(b.schema_json), templateId: c.id, baseId };
   });
   const proposal = await proposeTemplateDiff({ tenantId: s.p.tenantId! }, base, request);
   return tx(s, async (t) => {

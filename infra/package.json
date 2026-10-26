@@ -1,0 +1,23 @@
+{
+  "name": "@aba/infra",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "synth": "cdk synth --quiet -c env=dev && cdk synth --quiet -c env=prod",
+    "deploy:dev": "cdk deploy --all -c env=dev --require-approval never",
+    "diff:prod": "cdk diff --all -c env=prod",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "dependencies": {
+    "@aba/config": "workspace:*",
+    "aws-cdk-lib": "^2.274.0",
+    "constructs": "^10.8.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "aws-cdk": "^2.1146.1",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  }
+}

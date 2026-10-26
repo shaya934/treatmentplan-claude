@@ -19,6 +19,8 @@ export interface FieldEntry {
 export type PlanContent = Record<string, FieldEntry>;
 
 export const PLACEHOLDER_RE = /\[BCBA to confirm:[^\]]*\]/g;
+/** Non-global twin for .test() (a /g regex keeps state between calls). */
+export const HAS_PLACEHOLDER = /\[BCBA to confirm:[^\]]*\]/;
 
 export function placeholder(what: string): string {
   return `[BCBA to confirm: ${what}]`;

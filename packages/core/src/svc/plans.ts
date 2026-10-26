@@ -184,7 +184,7 @@ export interface PlanBundle {
   review: ReviewRow[];
   files: Array<{ id: string; filename: string; mime: string; pages: number | null; extraction_status: string; uploaded_at: string; size_bytes: number }>;
   vars: Record<string, string>;
-  permissions: { edit: boolean; finalize: boolean; export: boolean };
+  permissions: { edit: boolean; finalize: boolean; export: boolean; reopen: boolean };
 }
 
 export async function getPlanBundle(s: Svc, planId: string): Promise<PlanBundle> {
@@ -228,6 +228,7 @@ export async function getPlanBundle(s: Svc, planId: string): Promise<PlanBundle>
         edit: can(s.p, "plan.edit", policy) && plan.status !== "final",
         finalize: can(s.p, "plan.finalize", policy) && ownClient && plan.status !== "final",
         export: can(s.p, "plan.export", policy),
+        reopen: can(s.p, "plan.edit", policy) && ownClient && plan.status === "final",
       },
     };
   });

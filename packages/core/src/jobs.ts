@@ -33,8 +33,10 @@ export async function enqueue(t: Tx, type: JobType, payload: Record<string, stri
     if (env().mode === "aws") {
       sqs ??= new SQSClient({ region: env().region });
       await sqs.send(new SendMessageCommand({ QueueUrl: env().queueUrl, MessageBody: JSON.stringify(msg) }));
-    } else if (localRunner) {
-      const run = localRunner;
+    } else {
+      // Local mode: run in-process. Falls back to the worker module when no runner was
+      // registered (e.g. when Next bundles its own copy of this module).
+      const run = localRunner ?? (await import("./svc/work")).runJob;
       setImmediate(() => run(msg).catch((e) => log.error({ event: "job_failed", jobId: msg.jobId, jobType: type }, e)));
     }
   };
