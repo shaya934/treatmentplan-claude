@@ -3,7 +3,7 @@
  * Only models on the AWS HIPAA-eligible list may be used. Fable and Mythos models
  * are excluded on Bedrock and must never be added.
  *
- * IDs are Bedrock inference-profile IDs for us-east-1. Confirm availability in the
+ * IDs are Bedrock inference-profile IDs (US cross-region; called from us-east-2). Confirm availability in the
  * Bedrock console (Model access) for the deploying account before first deploy.
  */
 export type AiStep =
@@ -16,9 +16,9 @@ export type AiStep =
   | "complex_case";
 
 export const MODEL_IDS = {
-  haiku: "us.anthropic.claude-haiku-5-5-v1:0",
-  sonnet: "us.anthropic.claude-sonnet-5-5-v1:0",
-  opus: "us.anthropic.claude-opus-5-5-v1:0",
+  haiku: "us.anthropic.claude-haiku-5-5",
+  sonnet: "us.anthropic.claude-sonnet-5-5",
+  opus: "us.anthropic.claude-opus-5-5",
 } as const;
 
 export type ModelKey = keyof typeof MODEL_IDS;

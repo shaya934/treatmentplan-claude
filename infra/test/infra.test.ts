@@ -10,7 +10,7 @@ import { SecurityStack } from "../lib/security-stack";
 function synth(name: "dev" | "prod") {
   const app = new App({ context: { "@aws-cdk/core:defaultCrossStackReferences": "strong" } });
   const cfg = envConfig(name, () => undefined);
-  const env = { account: "111111111111", region: "us-east-1" };
+  const env = { account: "111111111111", region: "us-east-2" };
   const platform = new Stack(app, "P", { env });
   const f = new Foundation(platform, "Foundation", cfg);
   new AppService(platform, "App", cfg, f);
