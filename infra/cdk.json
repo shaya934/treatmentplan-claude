@@ -2,12 +2,20 @@
   "app": "npx tsx bin/app.ts",
   "context": {
     "aba:dev": {
+      "account": "REPLACE-WITH-12-DIGIT-ACCOUNT-ID",
       "domainName": "dev.REPLACE-ME.example",
-      "alarmEmail": "REPLACE-ME@example.com"
+      "hostedZoneId": "",
+      "hostedZoneName": "",
+      "alarmEmail": "REPLACE-ME@example.com",
+      "ownerEmail": "REPLACE-ME@example.com"
     },
     "aba:prod": {
+      "account": "REPLACE-WITH-12-DIGIT-ACCOUNT-ID",
       "domainName": "app.REPLACE-ME.example",
-      "alarmEmail": "REPLACE-ME@example.com"
+      "hostedZoneId": "",
+      "hostedZoneName": "",
+      "alarmEmail": "REPLACE-ME@example.com",
+      "ownerEmail": "REPLACE-ME@example.com"
     },
     "@aws-cdk/aws-iam:minimizePolicies": true,
     "@aws-cdk/core:target-partitions": [

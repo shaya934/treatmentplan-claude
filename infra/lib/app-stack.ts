@@ -62,6 +62,7 @@ export class AppService extends Construct {
       TRANSCRIBE_VOCABULARY: vocabName,
       APP_URL: `https://${cfg.domainName}`,
       SESSION_IDLE_MINUTES: "15",
+      OWNER_EMAIL: cfg.ownerEmail,
       DB_HOST: f.db.dbInstanceEndpointAddress,
       DB_PORT: f.db.dbInstanceEndpointPort,
       DB_NAME: "aba",
