@@ -38,6 +38,8 @@ export interface StructuredRequest<T> {
   toolName: string;
   toolDescription: string;
   schema: z.ZodType<T>;
+  /** PNG images shown to the model before the user text, each preceded by its label. */
+  images?: Array<{ label: string; png: Uint8Array }>;
   /** Structured inputs the prompt was built from. Used only by the local mock client. */
   mockInput?: unknown;
   maxTokens?: number;
@@ -81,7 +83,8 @@ export class BedrockAiClient implements AiClient {
 
     let lastIssue = "";
     for (let attempt = 1; attempt <= 2; attempt++) {
-      const user: ContentBlock[] = [{ text: req.user }];
+      const user: ContentBlock[] = (req.images ?? []).flatMap((img): ContentBlock[] => [{ text: img.label }, { image: { format: "png", source: { bytes: img.png } } }]);
+      user.push({ text: req.user });
       if (attempt === 2) user.push({ text: `Your previous output did not match the required schema (${lastIssue}). Call ${req.toolName} again with valid input.` });
       const started = Date.now();
       const res = await this.client.send(

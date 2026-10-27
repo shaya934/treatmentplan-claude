@@ -5,6 +5,7 @@ import { SafeError } from "../logger";
 import { assertCan } from "../rbac";
 import { ALLOWED_MIME, fileKey, MAX_UPLOAD_BYTES, storage } from "../storage";
 import { log, tx, type Svc } from "./context";
+import { deleteFigures, deleteObjects } from "./figures";
 import { assertPlanEditable, getPlanRow, tenantPolicy } from "./plans";
 
 /** Uploads go straight to encrypted S3 via presigned URLs (spec F2). */
@@ -62,15 +63,16 @@ export async function downloadUrl(s: Svc, fileId: string) {
 }
 
 export async function deleteFile(s: Svc, planId: string, fileId: string) {
-  const key = await tx(s, async (t) => {
+  const keys = await tx(s, async (t) => {
     await assertPlanEditable(t, s, planId);
     const f = await one<{ s3_key: string }>(t, "SELECT s3_key FROM files WHERE id = $1 AND plan_id = $2", [fileId, planId]);
     if (!f) throw new SafeError("File not found", 404);
     await t.query("UPDATE evidence SET deleted = true WHERE file_id = $1", [fileId]);
     await t.query("UPDATE evidence SET file_id = NULL WHERE file_id = $1", [fileId]);
+    const figureKeys = await deleteFigures(t, "file_id", fileId);
     await t.query("DELETE FROM files WHERE id = $1", [fileId]);
     await log(t, s, "delete", "file", fileId);
-    return f.s3_key;
+    return [f.s3_key, ...figureKeys];
   });
-  await storage().delete(key);
+  await deleteObjects(keys);
 }

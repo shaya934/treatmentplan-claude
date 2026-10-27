@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { makePdf, SYNTHETIC_CLIENTS } from "@aba/core/fixtures";
+import { makeLearningTreePdf, makePdf, SYNTHETIC_CLIENTS } from "@aba/core/fixtures";
 
 /** Writes the synthetic client PDFs to fixtures/out so they can be uploaded through the UI. */
 const out = join(import.meta.dirname, "..", "fixtures", "out");
@@ -11,3 +11,5 @@ for (const c of SYNTHETIC_CLIENTS) {
     console.log("wrote", f.filename);
   }
 }
+await writeFile(join(out, "ava_learning_tree_graphs.pdf"), await makeLearningTreePdf());
+console.log("wrote ava_learning_tree_graphs.pdf");

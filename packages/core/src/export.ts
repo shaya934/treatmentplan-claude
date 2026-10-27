@@ -76,6 +76,63 @@ export function planBodyXml(t: Template, content: PlanContent, vars: Record<stri
   return xml;
 }
 
+export interface ExportFigure {
+  png: Buffer;
+  title: string;
+  /** e.g. "ava_learning_tree.pdf, page 3" */
+  source: string;
+  summary: string;
+}
+
+const EMU_PER_PX = 9525; // at 96 dpi
+const MAX_W = 5_486_400; // 6.0 in
+const MAX_H = 6_858_000; // 7.5 in
+
+/** Inline picture; namespaces are declared inline so it works in any company Word template. */
+function pictureXml(i: number, png: Buffer): string {
+  const w = png.readUInt32BE(16);
+  const h = png.readUInt32BE(20);
+  const k = Math.min(1, MAX_W / (w * EMU_PER_PX), MAX_H / (h * EMU_PER_PX));
+  const cx = Math.round(w * EMU_PER_PX * k);
+  const cy = Math.round(h * EMU_PER_PX * k);
+  const id = 9000 + i;
+  return (
+    `<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:after="60"/></w:pPr><w:r><w:drawing>` +
+    `<wp:inline distT="0" distB="0" distL="0" distR="0" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">` +
+    `<wp:extent cx="${cx}" cy="${cy}"/><wp:docPr id="${id}" name="Graph ${i}"/>` +
+    `<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">` +
+    `<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="${id}" name="graph${i}.png"/><pic:cNvPicPr/></pic:nvPicPr>` +
+    `<pic:blipFill><a:blip r:embed="rIdAbaFig${i}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>` +
+    `<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>` +
+    `</a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`
+  );
+}
+
+export function figuresXml(figures: ExportFigure[], color: string): string {
+  if (!figures.length) return "";
+  let xml = para("Graphs", { bold: true, size: 26, color: "FFFFFF", shade: color, spaceAfter: 120 });
+  figures.forEach((f, n) => {
+    const i = n + 1;
+    xml += pictureXml(i, f.png);
+    xml += para(`Figure ${i}. ${f.title} (source: ${f.source})`, { italic: true, size: 18, center: true, spaceAfter: 60 });
+    xml += para(f.summary, { size: 20, spaceAfter: 200 });
+  });
+  return xml;
+}
+
+/** Add the figure images to the package: media files, relationships and the png content type. */
+function addFigureParts(zip: PizZip, figures: ExportFigure[]) {
+  if (!figures.length) return;
+  figures.forEach((f, n) => zip.file(`word/media/aba_graph${n + 1}.png`, f.png));
+  const relsPath = "word/_rels/document.xml.rels";
+  const rels = zip.file(relsPath)!.asText();
+  const added = figures.map((_, n) => `<Relationship Id="rIdAbaFig${n + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/aba_graph${n + 1}.png"/>`).join("");
+  zip.file(relsPath, rels.replace("</Relationships>", `${added}</Relationships>`));
+  const ctPath = "[Content_Types].xml";
+  const ct = zip.file(ctPath)!.asText();
+  if (!/Extension="png"/i.test(ct)) zip.file(ctPath, ct.replace(/(<Types[^>]*>)/, '$1<Default Extension="png" ContentType="image/png"/>'));
+}
+
 /** Default company Word template, used until the company uploads its own. */
 export async function defaultWordTemplate(t: Template, logo?: Buffer): Promise<Buffer> {
   const headerChildren: Paragraph[] = [];
@@ -117,13 +174,16 @@ export interface ExportInput {
   logo?: Buffer | null;
   finalDate?: string | null;
   draft: boolean;
+  /** Graphs the BCBA chose to include, in report order. */
+  figures?: ExportFigure[];
 }
 
 export async function renderDocx(i: ExportInput): Promise<Buffer> {
   const base = i.wordTemplate ?? (await defaultWordTemplate(i.template, i.logo ?? undefined));
   const zip = new PizZip(base);
   const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true, nullGetter: () => "" });
-  let body = planBodyXml(i.template, i.content, i.vars);
+  const figures = i.figures ?? [];
+  let body = planBodyXml(i.template, i.content, i.vars) + figuresXml(figures, i.template.branding.primaryColor.replace("#", "").toUpperCase());
   if (i.draft) body = para("DRAFT - not finalized. Requires BCBA review before use.", { bold: true, color: "C00000", center: true }) + body;
   doc.render({
     body,
@@ -133,7 +193,9 @@ export async function renderDocx(i: ExportInput): Promise<Buffer> {
     final_date: i.finalDate ?? "",
     provider_name: String(i.content.supervising_bcba?.value ?? ""),
   });
-  return doc.getZip().generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;
+  const out = doc.getZip();
+  addFigureParts(out, figures);
+  return out.generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;
 }
 
 /** DOCX -> PDF via LibreOffice. Temp files are wiped immediately after. */

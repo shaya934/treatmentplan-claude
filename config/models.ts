@@ -8,6 +8,7 @@
  */
 export type AiStep =
   | "extraction"
+  | "graph_reading"
   | "guided_chat"
   | "narrative"
   | "review"
@@ -32,6 +33,8 @@ export type ModelKey = keyof typeof MODEL_IDS;
 /** Default model per pipeline step (spec: AI design table). */
 export const STEP_MODELS: Record<AiStep, ModelKey> = {
   extraction: "haiku",
+  // Reading values off graph images needs the stronger vision model.
+  graph_reading: "sonnet",
   guided_chat: "haiku",
   narrative: "sonnet",
   review: "sonnet",

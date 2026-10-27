@@ -4,6 +4,7 @@ import { SafeError } from "@aba/core/logger";
 import * as plans from "@aba/core/svc/plans";
 import * as files from "@aba/core/svc/files";
 import * as work from "@aba/core/svc/work";
+import * as figures from "@aba/core/svc/figures";
 import { EvidenceCategory } from "@aba/core/template/schema";
 import { one } from "@aba/core/db";
 import { tx } from "@aba/core/svc/context";
@@ -11,10 +12,10 @@ import { api, body } from "@/lib/api";
 
 /**
  * Plan sub-resources. One dispatcher keeps the many small endpoints together:
- *   GET  versions | versions/:n | questions | chat | validate | jobs | stream
+ *   GET  versions | versions/:n | questions | chat | validate | jobs | stream | figures
  *   POST fields | restore | files | files/:id/complete | files/:id/delete | evidence | evidence/:id | evidence/confirm-all
  *        prefill | answer | question | generate | chat | chat/decide | review/:id | finalize | reopen
- *        update-template | export | complex-case
+ *        update-template | export | complex-case | figures/:id
  */
 type P = { id: string; action: string[] };
 
@@ -44,6 +45,8 @@ export const GET = api<P>(async ({ svc, params, req }) => {
       return plans.validate(svc, params.id);
     case "jobs":
       return work.planJobs(svc, params.id);
+    case "figures":
+      return figures.listFigures(svc, params.id);
     case "stream":
       return stream(svc, params.id, req.signal);
   }
@@ -87,6 +90,9 @@ export const POST = api<P>(
       if (!b) return files.requestUpload(svc, id, String(j.filename), String(j.mime), Number(j.size), j.purpose === "previous_plan" ? "previous_plan" : "source");
       if (c === "complete") return files.completeUpload(svc, id, b);
       if (c === "delete") return files.deleteFile(svc, id, b);
+      break;
+    case "figures":
+      if (b) return figures.setFigureIncluded(svc, id, b, z.object({ include: z.boolean() }).parse(j).include);
       break;
     case "evidence":
       if (!b) return plans.addEvidence(svc, id, z.object({ fact_text: z.string().min(1), category: EvidenceCategory, value: z.string().nullable(), unit: z.string().nullable(), source_date: z.string().nullable() }).parse(j));

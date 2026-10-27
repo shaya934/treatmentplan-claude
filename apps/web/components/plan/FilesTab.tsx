@@ -1,5 +1,5 @@
 "use client";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { call, fmtDate } from "@/lib/client";
 import type { Evidence, PlanBundle } from "@/lib/types";
 
@@ -173,6 +173,8 @@ export function FilesTab({ b, reload, editable }: { b: PlanBundle; reload: () =>
         </table>
       </div>
 
+      <GraphsPanel planId={b.plan.id} editable={editable} refreshKey={b.files.map((f) => `${f.id}:${f.extraction_status}`).join(",")} />
+
       <div className="flex items-center gap-3">
         <h2 className="font-semibold">Extracted facts ({b.evidence.length})</h2>
         <p className="text-sm text-slate-500">Check every fact. Correct or delete anything wrong; pre-fill updates automatically.</p>
@@ -281,6 +283,64 @@ export function FilesTab({ b, reload, editable }: { b: PlanBundle; reload: () =>
             )}
           </tbody>
         </table>
+      </div>
+    </div>
+  );
+}
+
+interface Figure {
+  id: string;
+  filename: string | null;
+  page: number;
+  title: string;
+  summary: string;
+  include_in_report: boolean;
+  url: string;
+}
+
+/** Graphs read from the uploaded files. Their trends are in the facts table; ticked ones go into the exported plan. */
+function GraphsPanel({ planId, editable, refreshKey }: { planId: string; editable: boolean; refreshKey: string }) {
+  const [figs, setFigs] = useState<Figure[]>([]);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    call<Figure[]>(`/api/plans/${planId}/figures`)
+      .then(setFigs)
+      .catch(() => setFigs([]));
+  }, [planId, refreshKey]);
+  if (!figs.length) return null;
+  async function toggle(f: Figure, include: boolean) {
+    setErr("");
+    try {
+      await call(`/api/plans/${planId}/figures/${f.id}`, { body: { include } });
+      setFigs((xs) => xs.map((x) => (x.id === f.id ? { ...x, include_in_report: include } : x)));
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  }
+  return (
+    <div className="card space-y-3 p-4">
+      <div>
+        <h2 className="font-semibold">Graphs found in the files ({figs.length})</h2>
+        <p className="text-sm text-slate-500">Each graph’s trend is added to the facts below as “Graph: …” rows; values read off a graph are approximate, so check them. Tick a graph to include it in the exported plan.</p>
+      </div>
+      {err && <p className="text-sm text-red-600">{err}</p>}
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {figs.map((f) => (
+          <figure key={f.id} className="space-y-2 rounded-lg border border-slate-200 p-3">
+            <img src={f.url} alt={f.title} className="max-h-64 w-full rounded border border-slate-100 bg-white object-contain" />
+            <figcaption className="text-sm">
+              <div className="font-medium">{f.title}</div>
+              <div className="text-xs text-slate-500">
+                {f.filename ?? "Uploaded file"}, page {f.page}
+              </div>
+              <p className="mt-1 text-xs text-slate-700">{f.summary}</p>
+            </figcaption>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={f.include_in_report} disabled={!editable} onChange={(e) => toggle(f, e.target.checked)} />
+              Include in report
+            </label>
+          </figure>
+        ))}
       </div>
     </div>
   );

@@ -12,6 +12,21 @@ export const ExtractedFact = z.object({
 export type ExtractedFact = z.infer<typeof ExtractedFact>;
 export const ExtractionOutput = z.object({ facts: z.array(ExtractedFact) });
 
+/** Graph reading: one entry per graph found on the page images shown. */
+export const GraphReading = z.object({
+  graphs: z.array(
+    z.object({
+      page: z.number().int().min(1),
+      title: z.string().min(1),
+      summary: z.string().min(1),
+      /** Where the graph sits on the page, as fractions of page width/height (0-1). */
+      bbox: z.object({ x: z.number(), y: z.number(), w: z.number(), h: z.number() }).nullable().optional(),
+      facts: z.array(ExtractedFact.omit({ page: true })),
+    }),
+  ),
+});
+export type GraphReading = z.infer<typeof GraphReading>;
+
 export const AnswerAssessment = z.object({
   complete: z.boolean(),
   follow_up: z.string().nullable().optional(),

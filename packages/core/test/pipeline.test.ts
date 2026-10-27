@@ -351,3 +351,34 @@ describe("no PHI in logs", () => {
     expect(out).toEqual({ event: "x", status: "call [phone] email [email] id [id]" });
   });
 });
+
+describe("Graphs in uploaded files", () => {
+  it("lists graphs with trend facts, lets the BCBA include one, and deletes graphs with their file", async () => {
+    const s = svcFor(w, "bcba2");
+    const pid = (await plans.createPlan(s, { clientId: w.clients.noah!, type: "initial", periodStart: "2026-11-01", periodEnd: "2027-04-29" })).id;
+    const { makeLearningTreePdf } = await import("../src/fixtures");
+    const fileId = await upload(s, pid, "noah_learning_tree_graphs.pdf", await makeLearningTreePdf());
+    await flush();
+
+    const figures = await import("../src/svc/figures");
+    const list = await figures.listFigures(s, pid);
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({ page: 2, filename: "noah_learning_tree_graphs.pdf", include_in_report: false });
+    expect(list[0]!.url).toBeTruthy();
+    const b = await plans.getPlanBundle(s, pid);
+    expect(b.evidence.some((e) => e.fact_text.startsWith("Graph:") && e.page === 2)).toBe(true);
+    expect(b.files[0]!.extraction_status).toBe("done");
+
+    await figures.setFigureIncluded(s, pid, list[0]!.id, true);
+    const included = await db.withCtx({ tenantId: w.tenantA, userId: null, role: "system" }, (t) => figures.planFigures(t, pid, true));
+    expect(included.map((f) => f.id)).toEqual([list[0]!.id]);
+    await expect(figures.setFigureIncluded(svcFor(w, "qaA"), pid, list[0]!.id, false)).rejects.toThrow();
+
+    const { storage } = await import("../src/storage");
+    const key = included[0]!.s3_key;
+    expect((await storage().get(key)).length).toBeGreaterThan(0);
+    await files.deleteFile(s, pid, fileId);
+    expect(await figures.listFigures(s, pid)).toHaveLength(0);
+    await expect(storage().get(key)).rejects.toThrow();
+  });
+});

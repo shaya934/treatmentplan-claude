@@ -270,8 +270,28 @@ const importSection: MockHandler = (input) => {
   return { fields: out };
 };
 
+/**
+ * Graph reading: the mock cannot look at images, so it "finds" one graph per page only in
+ * files named like graph exports (learning trees, graphs); other files have none, as a
+ * scanned letter would for the real model.
+ */
+const readGraphs: MockHandler = (input) => {
+  const { pages, filename } = input as { pages: number[]; filename: string };
+  if (!/graph|learning/i.test(filename)) return { graphs: [] };
+  return {
+    graphs: pages.map((page) => ({
+      page,
+      title: `Program graph on page ${page}`,
+      summary: "Mock reading (local mode): the trend is not analyzed; check the graph.",
+      bbox: { x: 0.1, y: 0.05, w: 0.8, h: 0.4 },
+      facts: [{ fact_text: `Graph: program trend on page ${page} (mock reading)`, category: "rate", value: null, unit: null, source_date: null }],
+    })),
+  };
+};
+
 export const mockHandlers: Record<string, MockHandler> = {
   import_section: importSection,
+  record_graphs: readGraphs,
   record_facts: extract,
   assess_answer: assessAnswer,
   write_section: writeSection,
