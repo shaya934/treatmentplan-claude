@@ -65,7 +65,18 @@ export default function Users() {
                     ))}
                   </select>
                 </td>
-                <td>{u.credential}</td>
+                <td>
+                  {/* A company admin with a BCBA credential can also start, edit and finalize plans (rbac.ts). */}
+                  <input
+                    className="input w-28 py-1"
+                    defaultValue={u.credential ?? ""}
+                    placeholder="e.g. BCBA"
+                    onBlur={async (e) => {
+                      const v = e.target.value.trim();
+                      if (v !== (u.credential ?? "")) (await call(`/api/admin/users/${u.id}`, { method: "PATCH", body: { credential: v } }), load());
+                    }}
+                  />
+                </td>
                 <td>{u.npi}</td>
                 <td>{u.mfa ? "✓" : "pending"}</td>
                 <td>
