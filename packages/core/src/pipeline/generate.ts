@@ -19,15 +19,26 @@ export interface SectionInput {
   clientFirstName: string;
 }
 
-/** Which fields generation may write: never static, calculated, or BCBA-completed fields. */
-export function generatableFields(section: Section, content: PlanContent): Field[] {
+/**
+ * Which fields generation may write: never static, calculated, or BCBA-completed fields.
+ * Content carried forward from the previous plan is kept as written unless the BCBA
+ * answered a question about that field this time (an answer means they want it changed).
+ */
+export function generatableFields(section: Section, content: PlanContent, answeredFieldIds: Set<string> = new Set()): Field[] {
   return section.fields.filter((f) => {
     if (f.type === "static" || f.calc) return false;
     const e = content[f.id];
     if (e?.status === "complete" || e?.status === "calculated") return false;
     if (e?.status === "prefilled" && !isEmptyValue(f, e.value)) return false;
+    if (e?.status === "carried_forward" && !isEmptyValue(f, e.value) && !answeredFieldIds.has(f.id)) return false;
     return true;
   });
+}
+
+/** Template fields covered by a question the BCBA has answered. */
+export function answeredFields(t: Template, answers: BcbaAnswer[]): Set<string> {
+  const answered = new Set(answers.map((a) => a.question_id));
+  return new Set(guidedQuestions(t).filter((q) => answered.has(q.id)).flatMap((q) => q.fieldIds));
 }
 
 export function relevantEvidence(fields: Field[], evidence: Evidence[], limit = 60): Evidence[] {
@@ -83,7 +94,7 @@ export async function generateSection(
   answers: BcbaAnswer[],
   client: ClientRecord,
 ): Promise<{ updates: Record<string, FieldEntry> }> {
-  const fields = generatableFields(section, content);
+  const fields = generatableFields(section, content, answeredFields(t, answers));
   if (!fields.length) return { updates: {} };
   const ev = relevantEvidence(fields, evidence);
   const ans = relevantAnswers(t, section, answers);
@@ -95,12 +106,13 @@ export async function generateSection(
   const currentXml = section.fields.filter((f) => f.type !== "static" && !isEmptyValue(f, content[f.id]?.value)).map((f) => `<field id="${f.id}">${valueToText(content[f.id]!.value).slice(0, 1500)}</field>`).join("\n");
 
   const client_ = await ai();
+  const updating = fields.filter((f) => content[f.id]?.status === "carried_forward").map((f) => f.id);
   const out = await client_.structured({
     step: "narrative",
     ctx,
     system: narrativeSystem(lengthGuide(fields)),
     cachedContext: `Template section: ${section.title}${section.intro ? `\n${section.intro}` : ""}`,
-    user: `Client first name: ${input.clientFirstName}\n<evidence>\n${evidenceXml || "(none)"}\n</evidence>\n<answers>\n${answersXml || "(none)"}\n</answers>\n<current_fields>\n${currentXml || "(none)"}\n</current_fields>\nWrite the fields listed above. Use [BCBA to confirm: ...] for anything not supported by evidence or answers.`,
+    user: `Client first name: ${input.clientFirstName}\n<evidence>\n${evidenceXml || "(none)"}\n</evidence>\n<answers>\n${answersXml || "(none)"}\n</answers>\n<current_fields>\n${currentXml || "(none)"}\n</current_fields>\nWrite the fields listed above. Use [BCBA to confirm: ...] for anything not supported by evidence or answers.${updating.length ? `\nThese fields hold last period's plan text: ${updating.join(", ")}. Keep that wording and change only what the BCBA's answers or new evidence update.` : ""}`,
     toolName: "write_section",
     toolDescription: "Return the written value for each field, with the evidence/answer IDs behind each sentence.",
     schema: SectionOutput,

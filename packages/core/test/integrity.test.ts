@@ -56,6 +56,22 @@ describe("clinical integrity", () => {
     }
   });
 
+  it("keeps carried-forward text unless the BCBA answered that field's question", async () => {
+    const { generatableFields, answeredFields } = await import("../src/pipeline/generate");
+    const { guidedQuestions, findField } = await import("../src/template/schema");
+    const q = guidedQuestions(T).find((x) => x.id === "strengths" || x.fieldIds.includes("strengths"))!;
+    const section = T.sections.find((s) => s.fields.some((f) => f.id === "strengths"))!;
+    const c = emptyContent(T);
+    c.strengths = { value: "Last period: strong visual matching and imitation.", status: "carried_forward", sources: ["previous_plan"] };
+    expect(findField(T, "strengths")).toBeDefined();
+    expect(generatableFields(section, c).map((f) => f.id)).not.toContain("strengths");
+    const answer = { id: "a", plan_id: "p", question_id: q.id, answer_text: "Now also requests with 3-word phrases.", input_mode: "typed", is_follow_up: false, created_at: "" };
+    expect(generatableFields(section, c, answeredFields(T, [answer as never])).map((f) => f.id)).toContain("strengths");
+    seen.length = 0;
+    const { updates } = await generateSection({ tenantId: "t" }, T, section, c, [], [], client);
+    expect(updates.strengths).toBeUndefined();
+  });
+
   it("generation never writes outside the requested fields or invents sources", async () => {
     const bad = new MockAiClient({
       write_section: () => ({ fields: [{ field_id: "member_id", value: "999", sentences: [] }, { field_id: "strengths", value: "Likes music.", sentences: [{ text: "Likes music.", sources: ["made-up-id"] }] }] }),
