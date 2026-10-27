@@ -105,21 +105,22 @@ describe("Phase 2: upload and extraction", () => {
 });
 
 describe("Phase 3: guided chat", () => {
-  it("shows what is already known, asks follow-ups for vague answers (max 2), and saves every answer", async () => {
+  it("skips anything the files cover, asks no follow-ups, and saves every answer", async () => {
     const s = svcFor(w, "bcba1");
-    const { questions } = await plans.getQuestions(s, planId);
+    const { questions, current } = await plans.getQuestions(s, planId);
     expect(questions).toHaveLength(29);
     const progress = questions.find((q) => q.id === "q_progress")!;
-    expect(progress.status).toBe("partial");
-    expect(progress.prompt).toMatch(/The Vineland-3 from 3\/2026 shows Communication SS 68/);
+    expect(progress.status).toBe("answered_by_files");
+    expect(progress.known).toMatch(/The Vineland-3 from 3\/2026 shows Communication SS 68/);
+    const open = questions.filter((q) => q.status === "open");
+    expect(open.length).toBeLessThan(questions.length);
+    expect(current).toBe(open[0]?.id ?? null);
 
+    // The BCBA can still add to a covered question; one answer completes it.
     const r1 = await plans.answerQuestion(s, planId, "q_progress", "doing well", "voice");
-    expect(r1.complete).toBe(false);
-    expect(r1.followUp).toBeTruthy();
-    const r2 = await plans.answerQuestion(s, planId, "q_progress", "she is better", "typed");
-    expect(r2.complete).toBe(false);
-    const r3 = await plans.answerQuestion(s, planId, "q_progress", "fine", "typed");
-    expect(r3.complete).toBe(true); // at most 2 follow-ups
+    expect(r1.complete).toBe(true);
+    expect(r1.followUp).toBeNull();
+    expect(r1.next).not.toBe("q_progress");
   });
 
   it("answers all questions and resumes on any device", async () => {
@@ -157,7 +158,8 @@ describe("Phase 4: narrative generation and review", () => {
   it("logs AI usage metadata per call (tokens, model, plan) without prompt text", async () => {
     const r = await db.withCtx({ tenantId: w.tenantA, userId: null, role: "system" }, (t) => t.query("SELECT step, model, input_tokens FROM ai_usage WHERE plan_id = $1", [planId]));
     const steps = new Set(r.rows.map((x) => x.step));
-    expect(steps).toEqual(new Set(["extraction", "guided_chat", "narrative", "review"]));
+    // No guided_chat: answers are accepted without an AI follow-up check (MAX_FOLLOW_UPS = 0).
+    expect(steps).toEqual(new Set(["extraction", "narrative", "review"]));
     expect(r.rows.find((x) => x.step === "narrative")!.model).toMatch(/sonnet/);
     expect(r.rows.find((x) => x.step === "extraction")!.model).toMatch(/haiku/);
   });
