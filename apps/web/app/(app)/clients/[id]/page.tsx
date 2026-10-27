@@ -159,6 +159,15 @@ export default function ClientPage({ params }: { params: Promise<{ id: string }>
         )}
       </div>
       <div className="space-y-4 lg:col-span-2">
+        {!me.can["plan.create"] && me.user.role === "company_admin" && !me.user.support && (
+          <p className="card p-4 text-sm text-slate-600">
+            Plans are started by a BCBA. To start plans yourself, set your credential to <strong>BCBA</strong> on the{" "}
+            <Link href="/admin/users" className="text-brand-600 hover:underline">
+              Users
+            </Link>{" "}
+            page, then reload this page. Or add a BCBA user and assign this client to them.
+          </p>
+        )}
         {me.can["plan.create"] && (
           <form onSubmit={start} className="card flex flex-wrap items-end gap-3 p-4">
             <div>
