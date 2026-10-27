@@ -91,9 +91,137 @@ export default function Super() {
         <input className="input" placeholder="Admin name" value={f.adminName} onChange={(e) => setF({ ...f, adminName: e.target.value })} required />
         <input className="input" placeholder={me.mode === "aws" ? "(Cognito emails a password)" : "Temp password (12+)"} value={f.tempPassword} onChange={(e) => setF({ ...f, tempPassword: e.target.value })} required={me.mode !== "aws"} />
         <button className="btn-primary w-fit">Create company</button>
-        <p className="text-xs text-slate-500 md:col-span-4">Each company gets its own data, users and a copy of the starter template. Sign a BAA with the company before they upload real PHI.</p>
+        <p className="text-xs text-slate-500 md:col-span-4">Each company gets its own data, users and a copy of the standard template below. Sign a BAA with the company before they upload real PHI.</p>
         {err && <p className="text-sm text-red-600 md:col-span-5">{err}</p>}
       </form>
+      <StandardTemplate />
+    </div>
+  );
+}
+
+interface TemplateShape {
+  name: string;
+  sections: Array<{ id: string; title: string; fields: Array<{ id: string; label: string; type: string; required?: boolean; question?: string }> }>;
+}
+interface StandardInfo {
+  template: TemplateShape;
+  version: number | null;
+  builtIn: boolean;
+  publishedAt: string | null;
+  changeReason: string | null;
+}
+
+/** The platform standard template: new companies start with a copy; existing companies are not changed. */
+function StandardTemplate() {
+  const [cur, setCur] = useState<StandardInfo | null>(null);
+  const [draft, setDraft] = useState<TemplateShape | null>(null);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState("");
+  const load = () => call<StandardInfo>("/api/super/template").then(setCur).catch((e) => setErr((e as Error).message));
+  useEffect(() => {
+    load();
+  }, []);
+
+  async function upload(file: File) {
+    setErr("");
+    setDraft(null);
+    setBusy("Converting your Word template… this usually takes about a minute.");
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/super/template/upload", { method: "POST", body: fd });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Conversion failed");
+      setDraft(data.draft);
+      setReason(`Standard template from ${file.name}`);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function publish(builtIn = false) {
+    setErr("");
+    setBusy("Publishing…");
+    try {
+      await call("/api/super/template", { body: builtIn ? { builtIn: true, changeReason: "Restored the built-in standard template" } : { template: draft, changeReason: reason } });
+      setDraft(null);
+      await load();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy("");
+    }
+  }
+
+  const count = (t: TemplateShape) => t.sections.reduce((n, s) => n + s.fields.filter((f) => f.type !== "static").length, 0);
+  return (
+    <div className="card space-y-3 p-4">
+      <div className="flex flex-wrap items-start gap-3">
+        <div>
+          <h2 className="font-semibold">Standard template for new companies</h2>
+          <p className="text-sm text-slate-500">
+            Every company you onboard starts with a copy of this template; each company can then change its own copy. Existing companies are not affected.
+          </p>
+          {cur && (
+            <p className="mt-1 text-sm">
+              Current: <strong>{cur.builtIn ? "built-in template" : `version ${cur.version}`}</strong> · {cur.template.sections.length} sections, {count(cur.template)} fields
+              {cur.publishedAt && <span className="text-slate-500"> · published {new Date(cur.publishedAt).toLocaleString()} – {cur.changeReason}</span>}
+            </p>
+          )}
+        </div>
+        <div className="ml-auto flex gap-2">
+          <label className={`btn-primary cursor-pointer ${busy ? "pointer-events-none opacity-50" : ""}`}>
+            Upload Word template (.docx)
+            <input type="file" accept=".docx" className="hidden" onChange={(e) => (e.target.files?.[0] && upload(e.target.files[0]), (e.target.value = ""))} />
+          </label>
+          {cur && !cur.builtIn && (
+            <button className="btn" disabled={!!busy} onClick={() => confirm("Make the built-in template the standard again?") && publish(true)}>
+              Restore built-in
+            </button>
+          )}
+        </div>
+      </div>
+      {busy && <p className="text-sm text-slate-600">{busy}</p>}
+      {err && <p className="text-sm text-red-600">{err}</p>}
+      {draft && (
+        <div className="space-y-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+          <p className="text-sm">
+            <strong>Draft – not saved yet.</strong> Found {draft.sections.length} sections and {count(draft)} fields. Check them below, then publish.
+          </p>
+          <div className="max-h-[50vh] space-y-2 overflow-y-auto rounded bg-white p-3">
+            {draft.sections.map((s) => (
+              <details key={s.id} className="text-sm">
+                <summary className="cursor-pointer font-medium">
+                  {s.title} <span className="text-slate-500">({s.fields.filter((f) => f.type !== "static").length} fields)</span>
+                </summary>
+                <ul className="ml-5 mt-1 list-disc text-xs text-slate-700">
+                  {s.fields.map((f) => (
+                    <li key={f.id}>
+                      {f.label} <span className="text-slate-400">· {f.type}{f.required ? " · required" : ""}</span>
+                      {f.question && <div className="text-slate-500">Question: {f.question}</div>}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            ))}
+          </div>
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="min-w-64 flex-1">
+              <label className="label">Change description</label>
+              <input className="input" value={reason} onChange={(e) => setReason(e.target.value)} />
+            </div>
+            <button className="btn-primary" disabled={!!busy || !reason.trim()} onClick={() => publish()}>
+              Publish as standard
+            </button>
+            <button className="btn" disabled={!!busy} onClick={() => setDraft(null)}>
+              Discard
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

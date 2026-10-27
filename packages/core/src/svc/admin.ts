@@ -9,6 +9,7 @@ import type { Template } from "../template/schema";
 import type { Role } from "../types";
 import { log, tx, type Svc } from "./context";
 import { deleteFigures, deleteObjects } from "./figures";
+import { standardTemplate } from "./platform-template";
 
 /** Users, audit search, usage, dashboards, tenants, support grants, retention. */
 
@@ -148,8 +149,8 @@ export async function listTenants(s: Svc) {
   });
 }
 
-/** Onboard a company: tenant, first admin, and a copy of the starter template. */
-export async function createTenant(s: Svc, input: { name: string; slug: string; adminEmail: string; adminName: string; tempPassword: string; template: Template }) {
+/** Onboard a company: tenant, first admin, and a copy of the platform standard template. */
+export async function createTenant(s: Svc, input: { name: string; slug: string; adminEmail: string; adminName: string; tempPassword: string; template?: Template }) {
   if (!/^[a-z0-9-]{2,40}$/.test(input.slug)) throw new SafeError("Slug must be lowercase letters, numbers and dashes");
   assertCan(s.p, "tenant.manage");
   const ident = await provisionIdentity(input.adminEmail, "company_admin", input.tempPassword);
@@ -159,7 +160,8 @@ export async function createTenant(s: Svc, input: { name: string; slug: string; 
     await t.query("INSERT INTO users (tenant_id, email, role, name, cognito_sub, password_hash) VALUES ($1,$2,'company_admin',$3,$4,$5)", [tenantId, input.adminEmail.toLowerCase(), input.adminName, ident.cognitoSub, ident.passwordHash]);
     await audit(t, { tenantId: null, userId: s.p.userId, action: "create", entity: "tenant", entityId: tenantId }, s.meta);
   });
-  await seedTemplate(tenantId, { ...input.template, branding: { ...input.template.branding, companyName: input.name, footer: input.name } });
+  const template = input.template ?? (await withCtx({ tenantId: null, userId: s.p.userId, role: "super_admin" }, standardTemplate)).template;
+  await seedTemplate(tenantId, { ...template, branding: { ...template.branding, companyName: input.name, footer: input.name } });
   return { id: tenantId };
 }
 

@@ -88,6 +88,10 @@ export type TemplateOp = z.infer<typeof TemplateOp>;
 export const TemplateDiffOutput = z.object({ ops: z.array(TemplateOp), summary: z.string() });
 export type TemplateDiffOutput = z.infer<typeof TemplateDiffOutput>;
 
+/** First pass of Word-template conversion: the sections in order, with each heading as written. */
+export const TemplateOutline = z.object({ sections: z.array(z.object({ title: z.string().min(1), heading: z.string().min(1) })) });
+export type TemplateOutline = z.infer<typeof TemplateOutline>;
+
 export const DocxTemplateOutput = z.object({
   sections: z.array(
     z.object({

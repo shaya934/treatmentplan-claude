@@ -255,6 +255,17 @@ const docxTemplate: MockHandler = (input) => {
   return { sections: sections.filter((s) => s.fields.length) };
 };
 
+/** Template outline: the same heading rule as docxTemplate, returned as section headings. */
+const templateOutline: MockHandler = (input) => {
+  const { text } = input as { text: string };
+  const sections = text
+    .split(/\n/)
+    .map((l) => l.trim())
+    .filter((line) => line && line.length < 60 && !/[.:]$/.test(line) && /^[A-Z]/.test(line) && line.split(" ").length <= 7 && !line.includes(":"))
+    .map((line) => ({ title: line, heading: line }));
+  return { sections };
+};
+
 /** Previous-plan import: copy any "Field label: text" line for text-like fields. */
 const importSection: MockHandler = (input) => {
   const { fields, pages } = input as { fields: Field[]; pages: PageText[] };
@@ -292,6 +303,7 @@ const readGraphs: MockHandler = (input) => {
 export const mockHandlers: Record<string, MockHandler> = {
   import_section: importSection,
   record_graphs: readGraphs,
+  template_outline: templateOutline,
   record_facts: extract,
   assess_answer: assessAnswer,
   write_section: writeSection,
