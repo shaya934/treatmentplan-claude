@@ -15,10 +15,15 @@ export type AiStep =
   | "template_edit"
   | "complex_case";
 
+/**
+ * Temporarily on the 4.x family: account 324404179405 is not yet enabled for the 5.5 models
+ * ("not available for this account"). Switch back to us.anthropic.claude-{haiku,sonnet,opus}-5-5
+ * once AWS enables them.
+ */
 export const MODEL_IDS = {
-  haiku: "us.anthropic.claude-haiku-5-5",
-  sonnet: "us.anthropic.claude-sonnet-5-5",
-  opus: "us.anthropic.claude-opus-5-5",
+  haiku: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  sonnet: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+  opus: "us.anthropic.claude-opus-4-6-v1",
 } as const;
 
 export type ModelKey = keyof typeof MODEL_IDS;
@@ -38,7 +43,7 @@ export const STEP_MODELS: Record<AiStep, ModelKey> = {
 export const MODEL_PRICING: Record<ModelKey, { input: number; output: number }> = {
   haiku: { input: 1.0, output: 5.0 },
   sonnet: { input: 3.0, output: 15.0 },
-  opus: { input: 15.0, output: 75.0 },
+  opus: { input: 5.0, output: 25.0 },
 };
 
 /** Model IDs IAM is scoped to. Infra reads this list. */
