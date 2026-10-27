@@ -255,7 +255,23 @@ const docxTemplate: MockHandler = (input) => {
   return { sections: sections.filter((s) => s.fields.length) };
 };
 
+/** Previous-plan import: copy any "Field label: text" line for text-like fields. */
+const importSection: MockHandler = (input) => {
+  const { fields, pages } = input as { fields: Field[]; pages: PageText[] };
+  const lines = pages.flatMap((p) => p.text.split("\n"));
+  const out: Array<{ field_id: string; value: string }> = [];
+  for (const f of fields) {
+    if (!["text", "narrative", "date", "number", "select"].includes(f.type)) continue;
+    const label = f.label.toLowerCase();
+    const line = lines.find((l) => l.toLowerCase().startsWith(`${label}:`));
+    const value = line?.slice(f.label.length + 1).trim();
+    if (value) out.push({ field_id: f.id, value });
+  }
+  return { fields: out };
+};
+
 export const mockHandlers: Record<string, MockHandler> = {
+  import_section: importSection,
   record_facts: extract,
   assess_answer: assessAnswer,
   write_section: writeSection,

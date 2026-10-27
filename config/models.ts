@@ -12,6 +12,7 @@ export type AiStep =
   | "narrative"
   | "review"
   | "plan_edit"
+  | "plan_import"
   | "template_edit"
   | "complex_case";
 
@@ -35,6 +36,7 @@ export const STEP_MODELS: Record<AiStep, ModelKey> = {
   narrative: "sonnet",
   review: "sonnet",
   plan_edit: "sonnet",
+  plan_import: "sonnet",
   template_edit: "sonnet",
   complex_case: "opus",
 };

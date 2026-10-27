@@ -57,11 +57,11 @@ export function relevantAnswers(t: Template, section: Section, answers: BcbaAnsw
   return answers.filter((a) => qmap.has(a.question_id)).map((a) => ({ ...a, question: qmap.get(a.question_id)! }));
 }
 
-function lengthGuide(fields: Field[]): string {
+export function lengthGuide(fields: Field[]): string {
   return "Fields to write:\n" + fields.map((f) => `- ${f.id} (${f.type}, length: ${f.lengthType}${f.required ? ", required" : ""}): ${f.label}${f.help ? ` — ${f.help}` : ""}${f.columns ? ` | columns: ${f.columns.map((c) => c.id).join(", ")}` : ""}${f.options ? ` | options: ${f.options.join(" / ")}` : ""}`).join("\n");
 }
 
-function normalizeValue(f: Field, v: unknown, current: FieldValue): FieldValue {
+export function normalizeValue(f: Field, v: unknown, current: FieldValue): FieldValue {
   if (f.type === "table") {
     if (!Array.isArray(v)) return current;
     const cols = (f.columns ?? []).map((c) => c.id);

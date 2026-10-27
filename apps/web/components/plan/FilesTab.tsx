@@ -25,8 +25,9 @@ export function FilesTab({ b, reload, editable }: { b: PlanBundle; reload: () =>
   const [editId, setEditId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Partial<Evidence>>({});
   const input = useRef<HTMLInputElement>(null);
+  const prevInput = useRef<HTMLInputElement>(null);
 
-  async function uploadAll(list: FileList | File[]) {
+  async function uploadAll(list: FileList | File[], purpose: "source" | "previous_plan" = "source") {
     setErr("");
     for (const f of Array.from(list)) {
       const ext = f.name.split(".").pop()?.toLowerCase() ?? "";
@@ -41,7 +42,7 @@ export function FilesTab({ b, reload, editable }: { b: PlanBundle; reload: () =>
       }
       setUploads((u) => ({ ...u, [f.name]: "uploading" }));
       try {
-        const up = await call<{ fileId: string; url: string; headers: Record<string, string> }>(`/api/plans/${b.plan.id}/files`, { body: { filename: f.name, mime, size: f.size } });
+        const up = await call<{ fileId: string; url: string; headers: Record<string, string> }>(`/api/plans/${b.plan.id}/files`, { body: { filename: f.name, mime, size: f.size, purpose } });
         const res = await fetch(up.url, { method: "PUT", headers: up.headers, body: f });
         if (!res.ok) throw new Error("Upload failed");
         await call(`/api/plans/${b.plan.id}/files/${up.fileId}/complete`, { method: "POST" });
@@ -91,6 +92,22 @@ export function FilesTab({ b, reload, editable }: { b: PlanBundle; reload: () =>
           <input ref={input} type="file" multiple accept={ACCEPT} className="hidden" onChange={(e) => e.target.files && uploadAll(e.target.files)} />
         </div>
       )}
+      {editable && b.plan.type === "reassessment" && (
+        <div className="card flex flex-wrap items-center gap-3 p-4">
+          <div className="text-sm">
+            <p className="font-medium">Last period’s plan</p>
+            <p className="text-slate-500">
+              {b.plan.previous_plan_id
+                ? "Content from the last plan finalized here is already copied in."
+                : "Upload last period’s plan (Word or PDF) to copy its content into this plan. You only change what’s new; copied fields are marked “Carried forward – confirm”."}
+            </p>
+          </div>
+          <button className="btn ml-auto" onClick={() => prevInput.current?.click()}>
+            Import previous plan
+          </button>
+          <input ref={prevInput} type="file" accept=".docx,.pdf" className="hidden" onChange={(e) => e.target.files && uploadAll(e.target.files, "previous_plan")} />
+        </div>
+      )}
       {err && <p className="text-sm text-red-600">{err}</p>}
       {Object.entries(uploads).length > 0 && (
         <ul className="text-sm text-slate-600">
@@ -115,7 +132,10 @@ export function FilesTab({ b, reload, editable }: { b: PlanBundle; reload: () =>
           <tbody>
             {b.files.map((f) => (
               <tr key={f.id}>
-                <td>{f.filename}</td>
+                <td>
+                  {f.filename}
+                  {f.purpose === "previous_plan" && <span className="badge ml-2 bg-orange-100 text-orange-800">Previous plan</span>}
+                </td>
                 <td>{f.pages ?? ""}</td>
                 <td>
                   <span className={`badge ${f.extraction_status === "done" ? "bg-emerald-100 text-emerald-800" : f.extraction_status === "failed" || f.extraction_status === "needs_ocr" ? "bg-red-100 text-red-800" : "bg-slate-100"}`}>

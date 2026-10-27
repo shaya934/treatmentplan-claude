@@ -9,8 +9,11 @@ import { assertPlanEditable, getPlanRow, tenantPolicy } from "./plans";
 
 /** Uploads go straight to encrypted S3 via presigned URLs (spec F2). */
 
-export async function requestUpload(s: Svc, planId: string, filename: string, mime: string, size: number) {
+export async function requestUpload(s: Svc, planId: string, filename: string, mime: string, size: number, purpose: "source" | "previous_plan" = "source") {
   if (!ALLOWED_MIME[mime]) throw new SafeError("Unsupported file type. Upload PDF, DOCX, PNG/JPG/TIFF, CSV or XLSX.");
+  if (purpose === "previous_plan" && !["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"].includes(mime)) {
+    throw new SafeError("Upload the previous plan as a Word (.docx) or PDF file.");
+  }
   if (size <= 0 || size > MAX_UPLOAD_BYTES) throw new SafeError("Files must be 50 MB or smaller.");
   const safeName = filename.replace(/[\\/\0]/g, "_").slice(0, 200);
   return tx(s, async (t) => {
@@ -18,7 +21,7 @@ export async function requestUpload(s: Svc, planId: string, filename: string, mi
     const plan = await assertPlanEditable(t, s, planId);
     const id = randomUUID();
     const key = fileKey(plan.tenant_id, plan.client_id, id, ALLOWED_MIME[mime]!);
-    await t.query("INSERT INTO files (id, tenant_id, client_id, plan_id, s3_key, filename, mime, size_bytes, uploaded_by) VALUES ($1, app_tenant(), $2, $3, $4, $5, $6, $7, $8)", [
+    await t.query("INSERT INTO files (id, tenant_id, client_id, plan_id, s3_key, filename, mime, size_bytes, uploaded_by, purpose) VALUES ($1, app_tenant(), $2, $3, $4, $5, $6, $7, $8, $9)", [
       id,
       plan.client_id,
       planId,
@@ -27,6 +30,7 @@ export async function requestUpload(s: Svc, planId: string, filename: string, mi
       mime,
       size,
       s.p.userId,
+      purpose,
     ]);
     const up = await storage().presignUpload(key, mime, size);
     await log(t, s, "upload", "file", id, { bytes: size });

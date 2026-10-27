@@ -6,6 +6,7 @@ import { log as plog, SafeError } from "../logger";
 import { assertCan } from "../rbac";
 import { extractFacts } from "../pipeline/extract";
 import { generatePlan } from "../pipeline/generate";
+import { applyImport, importPreviousPlan } from "../pipeline/import-plan";
 import { fileToPages } from "../pipeline/text";
 import { displayName, firstName } from "../types";
 import { log, sysTx, tx, type Svc } from "./context";
@@ -52,7 +53,7 @@ export async function runJob(m: JobMessage): Promise<void> {
 
 async function runExtract(tenantId: string, planId: string, fileId: string, userId: string | null) {
   const file = await sysTx(tenantId, userId, async (t) => {
-    const f = await one<{ s3_key: string; mime: string; filename: string; plan_id: string }>(t, "SELECT s3_key, mime, filename, plan_id FROM files WHERE id = $1", [fileId]);
+    const f = await one<{ s3_key: string; mime: string; filename: string; plan_id: string; purpose: string }>(t, "SELECT s3_key, mime, filename, plan_id, purpose FROM files WHERE id = $1", [fileId]);
     if (!f) throw new Error("file missing");
     await t.query("UPDATE files SET extraction_status = 'processing' WHERE id = $1", [fileId]);
     return f;
@@ -60,6 +61,7 @@ async function runExtract(tenantId: string, planId: string, fileId: string, user
   const plan = await sysTx(tenantId, userId, (t) => getPlanRow(t, planId));
   const bytes = await storage().get(file.s3_key);
   const pages = await fileToPages(bytes, file.mime, file.s3_key);
+  if (file.purpose === "previous_plan") return runImport(tenantId, planId, fileId, file.filename, pages, plan.complex_case, userId);
   const facts = await extractFacts({ tenantId, planId, complexCase: plan.complex_case }, file.filename, pages);
   const needsOcr = pages.filter((p) => p.needsOcr).map((p) => p.page);
   await sysTx(tenantId, userId, async (t) => {
@@ -86,6 +88,35 @@ async function runExtract(tenantId: string, planId: string, fileId: string, user
       ]);
     }
     await runPrefill(null, planId, t, userId);
+  });
+}
+
+/** Copy last period's plan (uploaded as Word/PDF) into this plan as carried-forward content. */
+async function runImport(tenantId: string, planId: string, fileId: string, filename: string, pages: Awaited<ReturnType<typeof fileToPages>>, complexCase: boolean, userId: string | null) {
+  const input = await sysTx(tenantId, userId, async (t) => {
+    const plan = await getPlanRow(t, planId);
+    const { template } = await loadTemplateVersion(t, plan.template_version_id);
+    return { template, current: (await latestVersion(t, planId)).content_json };
+  });
+  const updates = await importPreviousPlan({ tenantId, planId, complexCase }, input.template, filename, pages, input.current);
+  await sysTx(tenantId, userId, async (t) => {
+    // Re-read inside the lock and apply only the imported fields, so edits made meanwhile are kept.
+    await t.query("SELECT 1 FROM plans WHERE id = $1 FOR UPDATE", [planId]);
+    const latest = (await latestVersion(t, planId)).content_json;
+    const { content, filled } = applyImport(input.template, latest, updates);
+    const s: Svc = { p: { userId: userId ?? "", tenantId, role: "bcba" }, meta: {} };
+    if (filled.length) await saveVersion(t, s, planId, content, `Copied ${filled.length} fields from the previous plan (${filename})`);
+    for (const fid of filled) {
+      await t.query("INSERT INTO review_items (tenant_id, plan_id, field_id, kind, detail) VALUES (app_tenant(),$1,$2,'carried_forward',$3)", [planId, fid, "Carried forward from the previous plan - confirm"]);
+    }
+    const pageCount = pages.length;
+    await t.query("UPDATE files SET extraction_status = 'done', pages = $2 WHERE id = $1", [fileId, pageCount]);
+    if (!filled.length) {
+      await t.query("INSERT INTO review_items (tenant_id, plan_id, field_id, kind, detail) VALUES (app_tenant(),$1,NULL,'needs_ocr',$2)", [
+        planId,
+        `${filename}: no plan content could be matched to this template. Check it is last period's plan, or copy content in by hand.`,
+      ]);
+    }
   });
 }
 

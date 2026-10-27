@@ -104,6 +104,41 @@ describe("Phase 2: upload and extraction", () => {
   });
 });
 
+describe("Reassessment: import last period's plan from a file", () => {
+  it("copies matching fields as carried forward, never names/dates, and the draft keeps them", async () => {
+    const s = svcFor(w, "bcba2");
+    const pid = (await plans.createPlan(s, { clientId: w.clients.noah!, type: "reassessment", periodStart: "2026-11-01", periodEnd: "2027-04-29" })).id;
+    const { makePdf } = await import("../src/fixtures");
+    const pdf = await makePdf({
+      filename: "noah_previous_plan.pdf",
+      title: "Treatment Plan (previous period)",
+      pages: [["Last Name, First Name: Wrong, Name", "Primary Communication Mode: Vocal speech, 2-3 word phrases", "Client's Capabilities / Strengths: Strong visual matching and imitation."]],
+    } as never);
+    const { storage, LocalStorage } = await import("../src/storage");
+    const up = await files.requestUpload(s, pid, "noah_previous_plan.pdf", "application/pdf", pdf.length, "previous_plan");
+    await (storage() as InstanceType<typeof LocalStorage>).put(new URL(up.url).searchParams.get("key")!, pdf);
+    await files.completeUpload(s, pid, up.fileId);
+    await flush();
+
+    const b = await plans.getPlanBundle(s, pid);
+    expect(b.files[0]!.purpose).toBe("previous_plan");
+    expect(b.files[0]!.extraction_status).toBe("done");
+    expect(b.evidence).toHaveLength(0); // a previous plan is copied, not mined for facts
+    const c = b.version.content_json;
+    expect(c.communication_mode).toMatchObject({ value: "Vocal speech, 2-3 word phrases", status: "carried_forward" });
+    expect(c.strengths).toMatchObject({ value: "Strong visual matching and imitation.", status: "carried_forward" });
+    expect(c.client_name!.value).toBe("Sample, Noah"); // from the client record, never the old plan
+    expect(b.review.some((r) => r.kind === "carried_forward" && r.field_id === "strengths")).toBe(true);
+
+    // Questions about copied fields are skipped.
+    const { questions } = await plans.getQuestions(s, pid);
+    expect(questions.find((q) => q.fieldIds.includes("strengths"))!.status).toBe("answered_by_files");
+
+    // Source documents are still rejected as a previous plan if they are not Word/PDF.
+    await expect(files.requestUpload(s, pid, "x.csv", "text/csv", 10, "previous_plan")).rejects.toThrow(/Word/);
+  });
+});
+
 describe("Phase 3: guided chat", () => {
   it("skips anything the files cover, asks no follow-ups, and saves every answer", async () => {
     const s = svcFor(w, "bcba1");

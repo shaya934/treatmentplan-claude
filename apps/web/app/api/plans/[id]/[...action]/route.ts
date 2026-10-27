@@ -84,7 +84,7 @@ export const POST = api<P>(
     case "restore":
       return { version: await plans.restoreVersion(svc, id, Number(j.version)) };
     case "files":
-      if (!b) return files.requestUpload(svc, id, String(j.filename), String(j.mime), Number(j.size));
+      if (!b) return files.requestUpload(svc, id, String(j.filename), String(j.mime), Number(j.size), j.purpose === "previous_plan" ? "previous_plan" : "source");
       if (c === "complete") return files.completeUpload(svc, id, b);
       if (c === "delete") return files.deleteFile(svc, id, b);
       break;

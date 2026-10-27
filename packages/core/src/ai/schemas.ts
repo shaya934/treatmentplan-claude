@@ -32,6 +32,10 @@ export const SectionOutput = z.object({
 });
 export type SectionOutput = z.infer<typeof SectionOutput>;
 
+/** Previous-plan import: the content of each field as written in last period's plan. */
+export const ImportOutput = z.object({ fields: z.array(z.object({ field_id: z.string(), value: FieldValueOut })) });
+export type ImportOutput = z.infer<typeof ImportOutput>;
+
 export const ReviewOutput = z.object({
   conflicts: z.array(z.object({ field_id: z.string(), detail: z.string() })),
   unsupported: z.array(z.object({ field_id: z.string(), detail: z.string() })),
