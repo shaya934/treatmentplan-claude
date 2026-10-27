@@ -4,21 +4,23 @@ import { ImportOutput } from "../ai/schemas";
 import { cloneContent, isEmptyValue, type FieldEntry, type PlanContent } from "../plan/content";
 import type { Field, Template } from "../template/schema";
 import { lengthGuide, normalizeValue } from "./generate";
+import { IDENTITY_FIELDS } from "./prefill";
 import type { PageText } from "./text";
 
 /**
  * Previous-plan import: copy last period's plan (Word/PDF made outside the app)
  * into a reassessment, field by field, marked carried_forward for the BCBA to
  * confirm or change. The same rules as carry-forward from a plan finalized in
- * the app: fields marked carryForward=false (names, dates, signatures) are
- * never copied, and nothing the BCBA or this period's files filled is overwritten.
+ * the app: the client's identity (IDENTITY_FIELDS) is copied, other fields marked
+ * carryForward=false (report and authorization dates, signatures) are not, and
+ * nothing the BCBA, the client record or this period's files filled is overwritten.
  */
 
 /** Longest document text sent; ~75k tokens, plenty for a 30-40 page plan. */
 const MAX_CHARS = 300_000;
 
 export function fillable(f: Field, e: FieldEntry | undefined): boolean {
-  if (f.type === "static" || f.calc || f.carryForward === false) return false;
+  if (f.type === "static" || f.calc || (f.carryForward === false && !IDENTITY_FIELDS.has(f.id))) return false;
   if (!e) return true;
   return e.status === "needs_bcba" || e.status === "carried_forward" || isEmptyValue(f, e.value);
 }
@@ -65,6 +67,23 @@ export async function importPreviousPlan(
     }
   }
   return updates;
+}
+
+/** "4/12/2019", "2019-04-12" or "April 12, 2019" -> "2019-04-12"; anything else -> null. */
+export function toIsoDate(v: string): string | null {
+  const s = v.trim();
+  let y: number, mo: number, d: number;
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (m) [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  else if ((m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/))) [y, mo, d] = [Number(m[3]), Number(m[1]), Number(m[2])];
+  else {
+    const p = new Date(`${s} 12:00`);
+    if (isNaN(+p)) return null;
+    [y, mo, d] = [p.getFullYear(), p.getMonth() + 1, p.getDate()];
+  }
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d || y < 1900) return null;
+  return dt.toISOString().slice(0, 10);
 }
 
 /** Apply imported values onto the latest content, skipping fields filled since the import started. */

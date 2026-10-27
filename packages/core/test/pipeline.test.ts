@@ -137,6 +137,35 @@ describe("Reassessment: import last period's plan from a file", () => {
     // Source documents are still rejected as a previous plan if they are not Word/PDF.
     await expect(files.requestUpload(s, pid, "x.csv", "text/csv", 10, "previous_plan")).rejects.toThrow(/Word/);
   });
+
+  it("carries the client's identity and fills blanks in the client record, but not period dates", async () => {
+    const s = svcFor(w, "bcba2");
+    const clients = await import("../src/svc/clients");
+    const { id: clientId } = await clients.createClient(s, { name: "Blank, Kid", dob: null, medicaidId: null, payer: null, diagnosis: "F84.0", assignedBcbaId: null });
+    const pid = (await plans.createPlan(s, { clientId, type: "reassessment", periodStart: "2026-11-01", periodEnd: "2027-04-29" })).id;
+    const { makePdf } = await import("../src/fixtures");
+    const pdf = await makePdf({
+      filename: "kid_previous_plan.pdf",
+      title: "Treatment Plan (previous period)",
+      pages: [["Date of Birth: 4/12/2019", "Member ID: SYN555", "Insurance Company: Trillium", "Date of Report: 1/5/2026"]],
+    } as never);
+    const { storage, LocalStorage } = await import("../src/storage");
+    const up = await files.requestUpload(s, pid, "kid_previous_plan.pdf", "application/pdf", pdf.length, "previous_plan");
+    await (storage() as InstanceType<typeof LocalStorage>).put(new URL(up.url).searchParams.get("key")!, pdf);
+    await files.completeUpload(s, pid, up.fileId);
+    await flush();
+
+    const b = await plans.getPlanBundle(s, pid);
+    const c = b.version.content_json;
+    expect(c.dob!.value).toBe("4/12/2019");
+    expect(c.member_id!.value).toBe("SYN555");
+    expect(c.insurance!.value).toBe("Trillium");
+    expect(c.age!.value).toBe("7"); // calculated from the DOB now saved on the client record
+    expect(String(c.report_date?.value ?? "")).not.toBe("1/5/2026"); // period dates are never carried
+    const rec = await clients.getClient(s, clientId);
+    expect(rec.client).toMatchObject({ medicaid_id: "SYN555", payer: "Trillium" });
+    expect(String(rec.client.dob).slice(0, 10)).toBe("2019-04-12");
+  });
 });
 
 describe("Phase 3: guided chat", () => {

@@ -72,6 +72,15 @@ describe("clinical integrity", () => {
     expect(updates.strengths).toBeUndefined();
   });
 
+  it("reads previous-plan dates in common formats and rejects impossible ones", async () => {
+    const { toIsoDate } = await import("../src/pipeline/import-plan");
+    expect(toIsoDate("4/12/2019")).toBe("2019-04-12");
+    expect(toIsoDate("2019-04-12")).toBe("2019-04-12");
+    expect(toIsoDate("April 12, 2019")).toBe("2019-04-12");
+    expect(toIsoDate("13/45/2019")).toBeNull();
+    expect(toIsoDate("unknown")).toBeNull();
+  });
+
   it("generation never writes outside the requested fields or invents sources", async () => {
     const bad = new MockAiClient({
       write_section: () => ({ fields: [{ field_id: "member_id", value: "999", sentences: [] }, { field_id: "strengths", value: "Likes music.", sentences: [{ text: "Likes music.", sources: ["made-up-id"] }] }] }),

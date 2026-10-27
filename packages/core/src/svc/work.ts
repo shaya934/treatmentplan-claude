@@ -6,7 +6,7 @@ import { log as plog, SafeError } from "../logger";
 import { assertCan } from "../rbac";
 import { extractFacts } from "../pipeline/extract";
 import { generatePlan } from "../pipeline/generate";
-import { applyImport, importPreviousPlan } from "../pipeline/import-plan";
+import { applyImport, importPreviousPlan, toIsoDate } from "../pipeline/import-plan";
 import { fileToPages } from "../pipeline/text";
 import { displayName, firstName } from "../types";
 import { log, sysTx, tx, type Svc } from "./context";
@@ -108,6 +108,20 @@ async function runImport(tenantId: string, planId: string, fileId: string, filen
     if (filled.length) await saveVersion(t, s, planId, content, `Copied ${filled.length} fields from the previous plan (${filename})`);
     for (const fid of filled) {
       await t.query("INSERT INTO review_items (tenant_id, plan_id, field_id, kind, detail) VALUES (app_tenant(),$1,$2,'carried_forward',$3)", [planId, fid, "Carried forward from the previous plan - confirm"]);
+    }
+    // Fill blanks in the client record (never overwrite), then re-run pre-fill so age etc. follow.
+    const val = (id: string) => (filled.includes(id) && typeof content[id]?.value === "string" ? String(content[id]!.value).trim() || null : null);
+    const dob = val("dob") ? toIsoDate(val("dob")!) : null;
+    const plan = await getPlanRow(t, planId);
+    const r = await t.query(
+      `UPDATE clients SET dob = coalesce(dob, $2::date), medicaid_id = coalesce(nullif(medicaid_id, ''), $3), payer = coalesce(nullif(payer, ''), $4), gender = coalesce(nullif(gender, ''), $5)
+        WHERE id = $1 AND ((dob IS NULL AND $2::date IS NOT NULL) OR (nullif(medicaid_id, '') IS NULL AND $3::text IS NOT NULL)
+          OR (nullif(payer, '') IS NULL AND $4::text IS NOT NULL) OR (nullif(gender, '') IS NULL AND $5::text IS NOT NULL))`,
+      [plan.client_id, dob, val("member_id"), val("insurance"), val("gender")],
+    );
+    if (r.rowCount) {
+      await log(t, s, "update", "client", plan.client_id, { from: "previous_plan" });
+      await runPrefill(null, planId, t, userId);
     }
     const pageCount = pages.length;
     await t.query("UPDATE files SET extraction_status = 'done', pages = $2 WHERE id = $1", [fileId, pageCount]);

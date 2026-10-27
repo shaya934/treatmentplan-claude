@@ -11,7 +11,15 @@ import type { BcbaInfo, ClientRecord, Evidence, PlanRecord } from "../types";
  * here, so no number can be invented at this step.
  */
 
-const TOOL_RE = /(Vineland-?3?|VB-MAPP|ABLLS-?R?|ABAS-?3?|DP-?4|ESDM|SRS-?2|ADOS-?2?)/i;
+/**
+ * Who the client is: carried from the previous plan even though these fields
+ * are marked carryForward=false. The client record still wins when it has a
+ * value (pre-fill step 2 runs after carry-forward). Period-specific fields
+ * (report date, authorization dates, signatures) are never carried.
+ */
+export const IDENTITY_FIELDS = new Set(["client_name", "dob", "gender", "insurance", "member_id"]);
+
+const TOOL_RE =/(Vineland-?3?|VB-MAPP|ABLLS-?R?|ABAS-?3?|DP-?4|ESDM|SRS-?2|ADOS-?2?)/i;
 
 function isoToUs(d: string | null | undefined): string {
   if (!d) return "";
@@ -83,7 +91,7 @@ function prefillFresh({ template, plan, client, bcba, evidence, previous }: Pref
   // 1. Carry forward from the previous finalized plan (reassessments).
   if (previous && plan.type === "reassessment") {
     for (const f of allFields(template)) {
-      if (f.type === "static" || !f.carryForward) continue;
+      if (f.type === "static" || (!f.carryForward && !IDENTITY_FIELDS.has(f.id))) continue;
       const prev = previous[f.id];
       if (prev && !isEmptyValue(f, prev.value)) set(c, f.id, JSON.parse(JSON.stringify(prev.value)), "carried_forward", ["previous_plan"]);
     }
