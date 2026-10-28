@@ -156,7 +156,10 @@ function prefillFresh({ template, plan, client, bcba, evidence, previous }: Pref
   for (const e of ev) {
     const text = e.fact_text;
     const src = [e.id];
-    if (e.category === "score") {
+    if (e.category === "score" && /^graph:/i.test(text)) {
+      // Values read off a graph are trends, not assessment scores; they reach the plan through the narrative.
+      continue;
+    } else if (e.category === "score") {
       const tool = text.match(TOOL_RE)?.[1] ?? "";
       const domain = text
         .replace(TOOL_RE, "")

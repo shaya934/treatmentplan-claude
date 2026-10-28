@@ -8,6 +8,7 @@ import { assertCan } from "../rbac";
 import { extractFacts } from "../pipeline/extract";
 import { generatePlan } from "../pipeline/generate";
 import { graphPageImages, readGraphs, type FoundGraph } from "../pipeline/graphs";
+import { fillWeAchieveForm } from "../pdf-form/we-achieve";
 import { applyImport, importPreviousPlan, toIsoDate } from "../pipeline/import-plan";
 import { deleteFigures, deleteObjects, planFigures } from "./figures";
 import { fileToPages } from "../pipeline/text";
@@ -259,8 +260,16 @@ async function runExport(tenantId: string, planId: string, format: "docx" | "pdf
     diagnosis: String(content.diagnosis?.value ?? ""),
     company: data.template.branding.companyName,
   };
-  const docx = await renderDocx({ template: data.template, content, vars, wordTemplate, logo, finalDate: data.plan.final_date, draft: data.plan.status !== "final", planType: data.plan.type, figures });
-  const bytes = format === "pdf" ? await docxToPdf(docx) : docx;
+  const draft = data.plan.status !== "final";
+  // The company's own PDF form is filled directly (templates applied before pdfForm existed are recognized by name).
+  const pdfForm = data.template.branding.pdfForm ?? (data.template.name === "We Achieve ABA - Treatment Plan" ? "we-achieve" : undefined);
+  let bytes: Buffer;
+  if (format === "pdf" && pdfForm === "we-achieve") {
+    bytes = await fillWeAchieveForm({ content, firstName: vars.first_name, draft, figures, footer: data.template.branding.footer });
+  } else {
+    const docx = await renderDocx({ template: data.template, content, vars, wordTemplate, logo, finalDate: data.plan.final_date, draft, planType: data.plan.type, figures });
+    bytes = format === "pdf" ? await docxToPdf(docx) : docx;
+  }
   const key = exportKey(tenantId, planId, data.version.version, format);
   await storage().put(key, bytes, format === "pdf" ? "application/pdf" : "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
   await sysTx(tenantId, userId, (t) => t.query("UPDATE jobs SET payload = payload || $2::jsonb WHERE id = $1", [jobId, JSON.stringify({ s3Key: key, version: String(data.version.version) })]));

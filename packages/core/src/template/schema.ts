@@ -196,6 +196,8 @@ export const Branding = z.object({
   style: z.enum(["modern", "form"]).default("modern"),
   /** Logo shipped with the app (packages/core/assets), used when no logo was uploaded. */
   builtinLogo: z.string().optional(),
+  /** PDF export fills the company's own PDF form (src/pdf-form) instead of generating one, e.g. "we-achieve". */
+  pdfForm: z.string().optional(),
 });
 export type Branding = z.infer<typeof Branding>;
 

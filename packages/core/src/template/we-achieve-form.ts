@@ -23,7 +23,8 @@ const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", 
 const sub = (id: string, text: string) => ({ id, label: text, type: "static", style: "subheader", text });
 const note = (id: string, text: string) => ({ id, label: "Text", type: "static", text });
 const yesNo = (id: string, label: string, rowLabel: string, questionId: string) => ({ id, label, type: "boolean", display: "row", rowLabel, questionId, sourceHints: ["diagnosis", "medication", "other"] });
-const domain = (id: string, label: string, hints: string[]) => ({ id, label, type: "narrative", lengthType: "narrative", display: "block", questionId: "q_presentation", sourceHints: hints });
+// The form gives each skill area a small box, so these are 1-3 sentences (longer text continues on added pages).
+const domain = (id: string, label: string, hints: string[]) => ({ id, label, type: "narrative", lengthType: "medium", display: "block", questionId: "q_presentation", sourceHints: hints });
 
 const raw = {
   name: "We Achieve ABA - Treatment Plan",
@@ -35,6 +36,7 @@ const raw = {
     headerText: "Treatment Plan",
     style: "form",
     builtinLogo: "we-achieve-logo.png",
+    pdfForm: "we-achieve",
   },
   sections: [
     {
