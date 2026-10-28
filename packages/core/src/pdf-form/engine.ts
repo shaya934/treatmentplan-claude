@@ -35,7 +35,8 @@ export interface Layout {
   edges: Array<{ p: number; o: "h" | "v"; c: number; a: number; b: number }>;
 }
 
-export const ASSETS = join(import.meta.dirname, "..", "..", "assets");
+/** Resolved when a form is filled (the worker), not at import: bundlers such as Next.js have no import.meta.dirname. */
+export const assetsDir = () => process.env.ABA_ASSETS_DIR ?? join(import.meta.dirname ?? process.cwd(), "..", "..", "assets");
 const BLACK = rgb(0, 0, 0);
 const WHITE = rgb(1, 1, 1);
 const YELLOW = rgb(1, 0.95, 0.4);
@@ -87,11 +88,11 @@ export class FormFiller {
   }
 
   static async open(blankPdf: string, layoutJson: string): Promise<FormFiller> {
-    const doc = await PDFDocument.load(await readFile(join(ASSETS, blankPdf)));
+    const doc = await PDFDocument.load(await readFile(join(assetsDir(), blankPdf)));
     doc.registerFontkit(fontkit);
-    const font = await doc.embedFont(await readFile(join(ASSETS, "DejaVuSans.ttf")), { subset: true });
-    const bold = await doc.embedFont(await readFile(join(ASSETS, "DejaVuSans-Bold.ttf")), { subset: true });
-    const layout = JSON.parse(await readFile(join(ASSETS, layoutJson), "utf8")) as Layout;
+    const font = await doc.embedFont(await readFile(join(assetsDir(), "DejaVuSans.ttf")), { subset: true });
+    const bold = await doc.embedFont(await readFile(join(assetsDir(), "DejaVuSans-Bold.ttf")), { subset: true });
+    const layout = JSON.parse(await readFile(join(assetsDir(), layoutJson), "utf8")) as Layout;
     return new FormFiller(doc, layout, font, bold);
   }
 
