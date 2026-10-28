@@ -47,6 +47,19 @@ describe("graph reading", () => {
     expect(await cropPng(png, null)).toBe(png);
   });
 
+  it("stacked graphs on one page get crop boxes that don't run into each other", async () => {
+    const { separateBoxes } = await import("../src/pipeline/graphs");
+    const graphs = [
+      { page: 2, bbox: { x: 0.1, y: 0.45, w: 0.8, h: 0.4 } },
+      { page: 2, bbox: { x: 0.1, y: 0.05, w: 0.8, h: 0.45 } }, // runs into the lower graph's title
+      { page: 3, bbox: { x: 0.1, y: 0.1, w: 0.8, h: 0.8 } },
+    ];
+    separateBoxes(graphs);
+    expect(graphs[1]!.bbox.y + graphs[1]!.bbox.h).toBeLessThan(graphs[0]!.bbox.y);
+    expect(graphs[0]!.bbox.h).toBe(0.4);
+    expect(graphs[2]!.bbox.h).toBe(0.8);
+  });
+
   it("other file types have no graph pages", async () => {
     expect(await graphPageImages(Buffer.from("a,b\n1,2"), "text/csv")).toEqual([]);
   });
@@ -69,6 +82,22 @@ describe("graphs in the exported plan", () => {
     const body = zip.file("word/document.xml")!.asText();
     expect(body).toContain('r:embed="rIdAbaFig1"');
     expect(body).toContain("Figure 1. Mands for preferred items (source: ava_learning_tree_graphs.pdf, page 2)");
+  });
+
+  it("starts with a cover page of client facts and contents, and highlights gaps", async () => {
+    const c = emptyContent(T);
+    c.client_name = { value: "Testcase, Ava", status: "prefilled", sources: [] };
+    c.dob = { value: "2019-04-12", status: "prefilled", sources: [] };
+    c.strengths = { value: "Strong imitation. [BCBA to confirm: preference assessment results]", status: "needs_bcba", sources: [] };
+    const zip = new PizZip(await renderDocx({ template: T, content: c, vars: {}, draft: true, planType: "reassessment" }));
+    const body = zip.file("word/document.xml")!.asText();
+    const cover = body.slice(0, body.indexOf('<w:br w:type="page"/>'));
+    expect(cover).toContain("Reassessment");
+    expect(cover).toContain("Testcase, Ava");
+    expect(cover).toContain("4/12/2019"); // ISO date shown as M/D/YYYY
+    expect(cover).toContain("Contents");
+    expect(cover).toContain(T.sections[0]!.title);
+    expect(body).toMatch(/<w:highlight w:val="yellow"\/><\/w:rPr><w:t xml:space="preserve">\[BCBA to confirm: preference assessment results\]/);
   });
 
   it("exports unchanged when no graph is included", async () => {

@@ -64,8 +64,8 @@ export async function cropPng(png: Buffer, bbox?: { x: number; y: number; w: num
   if (!bbox || !(bbox.w >= 0.1 && bbox.h >= 0.05 && bbox.w <= 1.05 && bbox.h <= 1.05)) return png;
   const { createCanvas, loadImage } = await canvasImport();
   const img = await loadImage(png);
-  const pad = 0.02;
-  const x0 = clamp(bbox.x - pad) * img.width;
+  const pad = 0.01;
+  const x0 = clamp(bbox.x - 3 * pad) * img.width; // axis labels sit left of the plot area
   const y0 = clamp(bbox.y - pad) * img.height;
   const w = clamp(bbox.x + bbox.w + pad) * img.width - x0;
   const h = clamp(bbox.y + bbox.h + pad) * img.height - y0;
@@ -73,6 +73,27 @@ export async function cropPng(png: Buffer, bbox?: { x: number; y: number; w: num
   const c = createCanvas(Math.round(w), Math.round(h));
   c.getContext("2d").drawImage(img, x0, y0, w, h, 0, 0, Math.round(w), Math.round(h));
   return c.toBuffer("image/png");
+}
+
+type Box = { x: number; y: number; w: number; h: number };
+
+/**
+ * Graphs stacked on one page: the model's boxes are approximate and can run into the
+ * next graph's title, so each box ends just above where the next box below it starts.
+ */
+export function separateBoxes(graphs: Array<{ page: number; bbox?: Box | null }>) {
+  const byPage = new Map<number, Box[]>();
+  for (const g of graphs) if (g.bbox) byPage.set(g.page, [...(byPage.get(g.page) ?? []), g.bbox]);
+  for (const boxes of byPage.values()) {
+    boxes.sort((a, b) => a.y - b.y);
+    for (let i = 0; i < boxes.length - 1; i++) {
+      const cur = boxes[i]!;
+      const next = boxes[i + 1]!;
+      const overlapsHorizontally = cur.x < next.x + next.w && next.x < cur.x + cur.w;
+      // 0.04 of the page height leaves out the next graph's title line, which the model often puts inside its box.
+      if (overlapsHorizontally && cur.y + cur.h > next.y - 0.04) cur.h = Math.max(0.05, next.y - 0.04 - cur.y);
+    }
+  }
 }
 
 /** Page images of an uploaded file that may contain graphs. Other file types have none to read. */
@@ -105,6 +126,7 @@ export async function readGraphs(ctx: AiContext, filename: string, images: Array
       maxTokens: 6000,
     });
     const byPage = new Map(batch.map((b) => [b.page, b.png]));
+    separateBoxes(out.graphs);
     for (const g of out.graphs) {
       const png = byPage.get(g.page);
       if (!png) continue; // never trust a page number the model made up

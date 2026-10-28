@@ -44,6 +44,8 @@ export const TableColumn = z.object({
   label: z.string(),
   type: z.enum(["text", "number", "date", "select", "narrative"]).default("text"),
   options: z.array(z.string()).optional(),
+  /** Form style, "records" tables: show this column as its own gray-titled box after the record. */
+  box: z.boolean().optional(),
 });
 export type TableColumn = z.infer<typeof TableColumn>;
 
@@ -84,6 +86,16 @@ export const Field = z.object({
   /** Value computed from other fields (spec F3 status "Calculated"). */
   calc: z.string().optional(),
   carryForward: z.boolean().default(true),
+  /**
+   * Form-style export layout (ignored by the default layout):
+   * half = one of two label/value cells in a row; row = left label column + answer (fields with the
+   * same rowLabel share one row); block = gray label bar with the answer under it; records = a table
+   * shown as one box per row (e.g. one per FBA); none = only used inside {{field}} tokens in static text.
+   */
+  display: z.enum(["full", "half", "row", "block", "records", "none"]).optional(),
+  rowLabel: z.string().optional(),
+  /** Static text shown as a gray sub-header bar inside the section box. */
+  style: z.enum(["subheader"]).optional(),
 });
 export type Field = z.infer<typeof Field>;
 
@@ -180,6 +192,10 @@ export const Branding = z.object({
   logoS3Key: z.string().optional(),
   primaryColor: z.string().default("#1f4e79"),
   headerText: z.string().optional(),
+  /** "form": reproduce the company's paper form (boxed sections, gray title bars); default: modern layout. */
+  style: z.enum(["modern", "form"]).default("modern"),
+  /** Logo shipped with the app (packages/core/assets), used when no logo was uploaded. */
+  builtinLogo: z.string().optional(),
 });
 export type Branding = z.infer<typeof Branding>;
 

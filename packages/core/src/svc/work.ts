@@ -258,7 +258,7 @@ async function runExport(tenantId: string, planId: string, format: "docx" | "pdf
     diagnosis: String(content.diagnosis?.value ?? ""),
     company: data.template.branding.companyName,
   };
-  const docx = await renderDocx({ template: data.template, content, vars, wordTemplate, logo, finalDate: data.plan.final_date, draft: data.plan.status !== "final", figures });
+  const docx = await renderDocx({ template: data.template, content, vars, wordTemplate, logo, finalDate: data.plan.final_date, draft: data.plan.status !== "final", planType: data.plan.type, figures });
   const bytes = format === "pdf" ? await docxToPdf(docx) : docx;
   const key = exportKey(tenantId, planId, data.version.version, format);
   await storage().put(key, bytes, format === "pdf" ? "application/pdf" : "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
