@@ -142,3 +142,18 @@ describe("platform standard template", () => {
     expect(splitAtHeadings(text, [{ title: "Missing", heading: "Medical History" }])).toBeNull();
   });
 });
+
+describe("applying the standard to an existing company", () => {
+  it("adds a new template version with the form, keeps the company's name, and logs it", async () => {
+    const pt = await import("../src/svc/platform-template");
+    const owner = svcFor(w, "owner");
+    await pt.publishPlatformTemplate(owner, { builtIn: true, changeReason: "Use the form" });
+    const before = await tmpl.getCurrentTemplate(svcFor(w, "adminB"));
+    const { version } = await pt.applyStandardToTenant(owner, w.tenantB);
+    const after = await tmpl.getCurrentTemplate(svcFor(w, "adminB"));
+    expect(version).toBeGreaterThan(1);
+    expect(JSON.stringify(after)).toContain("Client Input and Assent");
+    expect(JSON.stringify(after)).toContain(JSON.stringify(before).match(/"companyName":"[^"]*"/)![0]);
+    await expect(pt.applyStandardToTenant(svcFor(w, "adminB"), w.tenantB)).rejects.toThrow();
+  });
+});

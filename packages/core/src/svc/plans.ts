@@ -182,7 +182,7 @@ export interface PlanBundle {
   evidence: Evidence[];
   answers: BcbaAnswer[];
   review: ReviewRow[];
-  files: Array<{ id: string; filename: string; mime: string; pages: number | null; extraction_status: string; uploaded_at: string; size_bytes: number; purpose: "source" | "previous_plan" }>;
+  files: Array<{ id: string; filename: string; mime: string; pages: number | null; extraction_status: string; uploaded_at: string; size_bytes: number; purpose: "source" | "previous_plan" | "assessment" | "graphs" | "other" }>;
   vars: Record<string, string>;
   permissions: { edit: boolean; finalize: boolean; export: boolean; reopen: boolean };
 }

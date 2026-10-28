@@ -382,3 +382,22 @@ describe("Graphs in uploaded files", () => {
     await expect(storage().get(key)).rejects.toThrow();
   });
 });
+
+describe("Upload boxes", () => {
+  it("graphs uploaded in the Graphs box are included in the report automatically", async () => {
+    const s = svcFor(w, "bcba2");
+    const pid = (await plans.createPlan(s, { clientId: w.clients.noah!, type: "initial", periodStart: "2026-11-01", periodEnd: "2027-04-29" })).id;
+    const { makeLearningTreePdf } = await import("../src/fixtures");
+    const pdf = await makeLearningTreePdf();
+    const { storage, LocalStorage } = await import("../src/storage");
+    const up = await files.requestUpload(s, pid, "noah_graphs.pdf", "application/pdf", pdf.length, "graphs");
+    await (storage() as InstanceType<typeof LocalStorage>).put(new URL(up.url).searchParams.get("key")!, pdf);
+    await files.completeUpload(s, pid, up.fileId);
+    await flush();
+    const b = await plans.getPlanBundle(s, pid);
+    expect(b.files[0]!.purpose).toBe("graphs");
+    const figs = await (await import("../src/svc/figures")).listFigures(s, pid);
+    expect(figs.length).toBeGreaterThan(0);
+    expect(figs.every((f) => f.include_in_report)).toBe(true);
+  });
+});

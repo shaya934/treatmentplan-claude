@@ -63,6 +63,20 @@ export default function Super() {
                     }}
                   >
                     Open 30-min support session
+                  </button>{" "}
+                  <button
+                    className="btn btn-sm"
+                    onClick={async () => {
+                      if (!confirm(`Give ${t.name} the standard template as a new version? Plans already started keep their version; new plans use the standard. The company can roll back from its version history.`)) return;
+                      try {
+                        const r = await call<{ version: number }>("/api/super/template/apply", { body: { tenantId: t.id } });
+                        alert(`${t.name} now uses the standard template (version ${r.version}).`);
+                      } catch (e) {
+                        alert((e as Error).message);
+                      }
+                    }}
+                  >
+                    Apply standard template
                   </button>
                 </td>
               </tr>

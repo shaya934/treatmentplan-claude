@@ -10,7 +10,11 @@ import { assertPlanEditable, getPlanRow, tenantPolicy } from "./plans";
 
 /** Uploads go straight to encrypted S3 via presigned URLs (spec F2). */
 
-export async function requestUpload(s: Svc, planId: string, filename: string, mime: string, size: number, purpose: "source" | "previous_plan" = "source") {
+/** Which upload box a file came from. previous_plan is copied into the plan; the rest are read for facts and graphs. */
+export type FilePurpose = "source" | "previous_plan" | "assessment" | "graphs" | "other";
+export const FILE_PURPOSES: FilePurpose[] = ["source", "previous_plan", "assessment", "graphs", "other"];
+
+export async function requestUpload(s: Svc, planId: string, filename: string, mime: string, size: number, purpose: FilePurpose = "source") {
   if (!ALLOWED_MIME[mime]) throw new SafeError("Unsupported file type. Upload PDF, DOCX, PNG/JPG/TIFF, CSV or XLSX.");
   if (purpose === "previous_plan" && !["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"].includes(mime)) {
     throw new SafeError("Upload the previous plan as a Word (.docx) or PDF file.");

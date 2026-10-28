@@ -87,7 +87,7 @@ async function runExtract(tenantId: string, planId: string, fileId: string, user
     await t.query("DELETE FROM evidence WHERE file_id = $1 AND NOT edited_by_bcba", [fileId]);
     const oldKeys = await deleteFigures(t, "file_id", fileId);
     for (const g of figures) {
-      await t.query("INSERT INTO figures (id, tenant_id, plan_id, file_id, page, s3_key, title, summary) VALUES ($1, app_tenant(), $2, $3, $4, $5, $6, $7)", [
+      await t.query("INSERT INTO figures (id, tenant_id, plan_id, file_id, page, s3_key, title, summary, include_in_report) VALUES ($1, app_tenant(), $2, $3, $4, $5, $6, $7, $8)", [
         g.id,
         planId,
         fileId,
@@ -95,6 +95,7 @@ async function runExtract(tenantId: string, planId: string, fileId: string, user
         figureKey(tenantId, plan.client_id, g.id),
         g.title.slice(0, 300),
         g.summary.slice(0, 2000),
+        file.purpose === "graphs", // graphs from the Graphs box go into the report unless the BCBA unticks them
       ]);
     }
     if (graphsFailed) {

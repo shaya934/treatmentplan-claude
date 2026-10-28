@@ -19,15 +19,12 @@ const MIME: Record<string, string> = {
 
 /** Upload files straight to encrypted storage, then review the extracted evidence table (spec F2). */
 export function FilesTab({ b, reload, editable }: { b: PlanBundle; reload: () => Promise<void>; editable: boolean }) {
-  const [drag, setDrag] = useState(false);
   const [uploads, setUploads] = useState<Record<string, string>>({});
   const [err, setErr] = useState("");
   const [editId, setEditId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Partial<Evidence>>({});
-  const input = useRef<HTMLInputElement>(null);
-  const prevInput = useRef<HTMLInputElement>(null);
 
-  async function uploadAll(list: FileList | File[], purpose: "source" | "previous_plan" = "source") {
+  async function uploadAll(list: FileList | File[], purpose: Purpose = "other") {
     setErr("");
     for (const f of Array.from(list)) {
       const ext = f.name.split(".").pop()?.toLowerCase() ?? "";
@@ -73,39 +70,18 @@ export function FilesTab({ b, reload, editable }: { b: PlanBundle; reload: () =>
   return (
     <div className="space-y-5">
       {editable && (
-        <div
-          onDragOver={(e) => {
-            e.preventDefault();
-            setDrag(true);
-          }}
-          onDragLeave={() => setDrag(false)}
-          onDrop={(e) => {
-            e.preventDefault();
-            setDrag(false);
-            uploadAll(e.dataTransfer.files);
-          }}
-          onClick={() => input.current?.click()}
-          className={`flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-8 text-sm ${drag ? "border-brand-500 bg-brand-50" : "border-slate-300 bg-white"}`}
-        >
-          <p className="font-medium">Drop client files here, or click to choose</p>
-          <p className="text-slate-500">PDF (typed or scanned), DOCX, images, CSV/XLSX data exports. Max 50 MB each. Files go straight to encrypted storage.</p>
-          <input ref={input} type="file" multiple accept={ACCEPT} className="hidden" onChange={(e) => e.target.files && uploadAll(e.target.files)} />
-        </div>
-      )}
-      {editable && b.plan.type === "reassessment" && (
-        <div className="card flex flex-wrap items-center gap-3 p-4">
-          <div className="text-sm">
-            <p className="font-medium">Last period’s plan</p>
-            <p className="text-slate-500">
-              {b.plan.previous_plan_id
-                ? "Content from the last plan finalized here is already copied in."
-                : "Upload last period’s plan (Word or PDF) to copy its content into this plan. You only change what’s new; copied fields are marked “Carried forward – confirm”."}
-            </p>
-          </div>
-          <button className="btn ml-auto" onClick={() => prevInput.current?.click()}>
-            Import previous plan
-          </button>
-          <input ref={prevInput} type="file" accept=".docx,.pdf" className="hidden" onChange={(e) => e.target.files && uploadAll(e.target.files, "previous_plan")} />
+        <div className="grid gap-3 md:grid-cols-2">
+          {BOXES.map((x) => (
+            <UploadBox
+              key={x.purpose}
+              title={x.title}
+              hint={x.purpose === "previous_plan" && b.plan.previous_plan_id ? "The last plan finalized here is already copied in. Upload one only if it was written outside the app." : x.hint}
+              accept={x.accept}
+              multiple={x.purpose !== "previous_plan"}
+              count={b.files.filter((f) => f.purpose === x.purpose).length}
+              onFiles={(list) => uploadAll(list, x.purpose)}
+            />
+          ))}
         </div>
       )}
       {err && <p className="text-sm text-red-600">{err}</p>}
@@ -134,7 +110,7 @@ export function FilesTab({ b, reload, editable }: { b: PlanBundle; reload: () =>
               <tr key={f.id}>
                 <td>
                   {f.filename}
-                  {f.purpose === "previous_plan" && <span className="badge ml-2 bg-orange-100 text-orange-800">Previous plan</span>}
+                  {BOXES.find((x) => x.purpose === f.purpose) && <span className="badge ml-2 bg-slate-100 text-slate-700">{BOXES.find((x) => x.purpose === f.purpose)!.title}</span>}
                 </td>
                 <td>{f.pages ?? ""}</td>
                 <td>
@@ -342,6 +318,45 @@ function GraphsPanel({ planId, editable, refreshKey }: { planId: string; editabl
           </figure>
         ))}
       </div>
+    </div>
+  );
+}
+
+type Purpose = "previous_plan" | "assessment" | "graphs" | "other";
+
+/** The four upload boxes: previous reassessment, assessments, graphs, other information. */
+const BOXES: Array<{ purpose: Purpose; title: string; hint: string; accept: string }> = [
+  { purpose: "previous_plan", title: "Previous reassessment", hint: "Last period’s plan (Word or PDF). Its content is copied into this plan; you only update what changed.", accept: ".docx,.pdf" },
+  { purpose: "assessment", title: "Assessments", hint: "Vineland, ABLLS-R, VB-MAPP, FAST and other assessment reports. Scores go into the matching sections.", accept: ACCEPT },
+  { purpose: "graphs", title: "Graphs", hint: "CentralReach graph exports or screenshots. Trends are read for progress and goals, and the graphs go into the report.", accept: ACCEPT },
+  { purpose: "other", title: "Other information", hint: "Intake, school/IEP, medical, caregiver notes, data exports and anything else.", accept: ACCEPT },
+];
+
+function UploadBox({ title, hint, accept, multiple, count, onFiles }: { title: string; hint: string; accept: string; multiple: boolean; count: number; onFiles: (f: FileList) => void }) {
+  const [drag, setDrag] = useState(false);
+  const input = useRef<HTMLInputElement>(null);
+  return (
+    <div
+      onDragOver={(e) => {
+        e.preventDefault();
+        setDrag(true);
+      }}
+      onDragLeave={() => setDrag(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        setDrag(false);
+        onFiles(e.dataTransfer.files);
+      }}
+      onClick={() => input.current?.click()}
+      className={`flex cursor-pointer flex-col gap-1 rounded-lg border-2 border-dashed p-4 text-sm ${drag ? "border-brand-500 bg-brand-50" : "border-slate-300 bg-white hover:border-slate-400"}`}
+    >
+      <div className="flex items-center justify-between">
+        <p className="font-semibold">{title}</p>
+        {count > 0 && <span className="badge bg-emerald-100 text-emerald-800">{count} uploaded</span>}
+      </div>
+      <p className="text-xs text-slate-500">{hint}</p>
+      <p className="mt-1 text-xs text-brand-600">Drop files here or click to choose</p>
+      <input ref={input} type="file" multiple={multiple} accept={accept} className="hidden" onClick={(e) => e.stopPropagation()} onChange={(e) => (e.target.files && onFiles(e.target.files), (e.target.value = ""))} />
     </div>
   );
 }
