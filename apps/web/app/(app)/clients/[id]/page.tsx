@@ -25,6 +25,7 @@ export default function ClientPage({ params }: { params: Promise<{ id: string }>
   const today = new Date().toISOString().slice(0, 10);
   const [plan, setPlan] = useState({ type: "reassessment", periodStart: today, periodEnd: addDays(today, 179) });
   const [bcbas, setBcbas] = useState<Array<{ id: string; name: string }>>([]);
+  const [edit, setEdit] = useState<{ name: string; dob: string; gender: string; medicaidId: string; payer: string; diagnosis: string } | null>(null);
   useEffect(() => {
     call<Data>(`/api/clients/${id}`).then((x) => {
       setD(x);
@@ -41,14 +42,71 @@ export default function ClientPage({ params }: { params: Promise<{ id: string }>
       setErr((e as Error).message);
     }
   }
+  async function saveEdit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!edit) return;
+    setErr("");
+    try {
+      await call(`/api/clients/${id}`, { method: "PATCH", body: { ...edit, dob: edit.dob || null } });
+      setD(await call<Data>(`/api/clients/${id}`));
+      setEdit(null);
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  }
   if (err && !d) return <p className="text-red-600">{err}</p>;
   if (!d) return <p className="text-sm text-slate-500">Loading…</p>;
   const c = d.client;
   return (
     <div className="grid gap-5 lg:grid-cols-3">
       <div className="card space-y-2 p-5 lg:col-span-1">
-        <h1 className="text-lg font-semibold">{c.name}</h1>
-        <dl className="grid grid-cols-2 gap-y-1 text-sm">
+        <div className="flex items-start justify-between gap-2">
+          <h1 className="text-lg font-semibold">{c.name}</h1>
+          {me.can["client.create"] && !edit && (
+            <button
+              className="btn btn-sm"
+              onClick={() => setEdit({ name: c.name, dob: c.dob?.slice(0, 10) ?? "", gender: c.gender ?? "", medicaidId: c.medicaid_id ?? "", payer: c.payer ?? "", diagnosis: c.diagnosis ?? "" })}
+            >
+              Edit
+            </button>
+          )}
+        </div>
+        {edit && (
+          <form onSubmit={saveEdit} className="space-y-2 text-sm">
+            <div>
+              <label className="label">Name (Last, First)</label>
+              <input className="input" value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} required />
+            </div>
+            <div>
+              <label className="label">Date of birth</label>
+              <input className="input" type="date" value={edit.dob} onChange={(e) => setEdit({ ...edit, dob: e.target.value })} />
+            </div>
+            <div>
+              <label className="label">Gender</label>
+              <input className="input" value={edit.gender} onChange={(e) => setEdit({ ...edit, gender: e.target.value })} />
+            </div>
+            <div>
+              <label className="label">Medicaid ID</label>
+              <input className="input" value={edit.medicaidId} onChange={(e) => setEdit({ ...edit, medicaidId: e.target.value })} />
+            </div>
+            <div>
+              <label className="label">Payer</label>
+              <input className="input" value={edit.payer} onChange={(e) => setEdit({ ...edit, payer: e.target.value })} placeholder="e.g. Trillium" />
+            </div>
+            <div>
+              <label className="label">Diagnosis</label>
+              <input className="input" value={edit.diagnosis} onChange={(e) => setEdit({ ...edit, diagnosis: e.target.value })} />
+            </div>
+            {err && <p className="text-red-600">{err}</p>}
+            <div className="flex gap-2">
+              <button className="btn-primary">Save</button>
+              <button type="button" className="btn" onClick={() => (setEdit(null), setErr(""))}>
+                Cancel
+              </button>
+            </div>
+          </form>
+        )}
+        <dl className={`grid grid-cols-2 gap-y-1 text-sm ${edit ? "hidden" : ""}`}>
           <dt className="text-slate-500">DOB</dt>
           <dd>{fmtDate(c.dob)}</dd>
           <dt className="text-slate-500">Gender</dt>
@@ -101,6 +159,15 @@ export default function ClientPage({ params }: { params: Promise<{ id: string }>
         )}
       </div>
       <div className="space-y-4 lg:col-span-2">
+        {!me.can["plan.create"] && me.user.role === "company_admin" && !me.user.support && (
+          <p className="card p-4 text-sm text-slate-600">
+            Plans are started by a BCBA. To start plans yourself, set your credential to <strong>BCBA</strong> on the{" "}
+            <Link href="/admin/users" className="text-brand-600 hover:underline">
+              Users
+            </Link>{" "}
+            page, then reload this page. Or add a BCBA user and assign this client to them.
+          </p>
+        )}
         {me.can["plan.create"] && (
           <form onSubmit={start} className="card flex flex-wrap items-end gap-3 p-4">
             <div>

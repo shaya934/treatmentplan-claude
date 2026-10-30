@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Treatment Plan Form</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header>
+    <img src="/logo.png" alt="We Achieve ABA" class="logo">
+    <span class="title">Treatment Plan Form</span>
+    <button id="signout" class="link" hidden>Sign out</button>
+  </header>
+
+  <main>
+    <!-- sign-in steps -->
+    <form id="login" class="card" hidden>
+      <h1>Sign in</h1>
+      <label>Email <input name="email" type="email" autocomplete="username" required></label>
+      <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+      <button>Continue</button>
+    </form>
+
+    <form id="newpw" class="card" hidden>
+      <h1>Choose your password</h1>
+      <p>First sign-in: replace the temporary password from the email. At least 14 characters, with upper and lower case letters, a number and a symbol.</p>
+      <label>New password <input name="password" type="password" autocomplete="new-password" minlength="14" required></label>
+      <button>Save password</button>
+    </form>
+
+    <form id="setup" class="card" hidden>
+      <h1>Set up your authenticator app</h1>
+      <p>Scan this with Google Authenticator, Microsoft Authenticator or a similar app, then type the 6-digit code it shows.</p>
+      <img id="qr" alt="QR code for your authenticator app" class="qr">
+      <p class="small">Can't scan? Enter this key in the app: <code id="secret"></code></p>
+      <label>6-digit code <input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="8" required></label>
+      <button>Finish</button>
+    </form>
+
+    <form id="mfa" class="card" hidden>
+      <h1>Authenticator code</h1>
+      <label>6-digit code from your authenticator app <input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="8" required></label>
+      <button>Sign in</button>
+    </form>
+
+    <!-- the app -->
+    <section id="app" class="card wide" hidden>
+      <h1>New treatment plan</h1>
+      <label id="drop" class="drop" tabindex="0">
+        <input id="files" type="file" multiple accept=".pdf,.docx,.xlsx,.csv,.png,.jpg,.jpeg" hidden>
+        <strong>Drop all of the client's documents here</strong>
+        <span>previous plan, assessments (Vineland, VB-MAPP…), evaluations, IEP, graphs — or click to choose</span>
+      </label>
+      <ul id="list"></ul>
+      <button id="create" disabled>Create filled form</button>
+      <div id="working" class="status" hidden><span class="spinner"></span> Reading the documents and filling in the form. This takes 2–5 minutes; keep this page open.</div>
+      <div id="done" class="status ok" hidden>
+        <p>Your form is ready. Items the documents didn't cover are highlighted in yellow for you to fill in.</p>
+        <button id="download">Download filled PDF</button>
+        <button id="again" class="secondary">Start a new plan (deletes these files now)</button>
+      </div>
+      <p class="small note">Documents and the filled form are deleted automatically after 24 hours. You are signed out after 15 minutes without activity.</p>
+    </section>
+
+    <p id="error" class="error" role="alert" hidden></p>
+  </main>
+</body>
+</html>

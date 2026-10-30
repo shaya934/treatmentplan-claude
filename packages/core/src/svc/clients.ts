@@ -107,6 +107,12 @@ export async function reassignClient(s: Svc, id: string, bcbaId: string) {
   });
 }
 
+/** People a client can be assigned to: BCBAs, clinical directors, and company admins who hold a BCBA credential (see rbac.ts). */
 export async function listBcbas(s: Svc) {
-  return tx(s, (t) => many<{ id: string; name: string; credential: string | null }>(t, "SELECT id, name, credential FROM users WHERE tenant_id = app_tenant() AND active AND role IN ('bcba','clinical_director') ORDER BY name"));
+  return tx(s, (t) =>
+    many<{ id: string; name: string; credential: string | null }>(
+      t,
+      "SELECT id, name, credential FROM users WHERE tenant_id = app_tenant() AND active AND (role IN ('bcba','clinical_director') OR (role = 'company_admin' AND credential ~* '\\mBCBA')) ORDER BY name",
+    ),
+  );
 }

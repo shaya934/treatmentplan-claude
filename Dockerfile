@@ -30,7 +30,7 @@ CMD ["sh", "-c", "cd /app/scripts && npx tsx bootstrap-db.ts && cd /app/apps/web
 
 FROM base AS worker
 ENV NODE_ENV=production RDS_CA_FILE=/etc/ssl/rds-global-bundle.pem SOFFICE_BIN=soffice
-RUN apt-get update && apt-get install -y --no-install-recommends libreoffice-writer-nogui fonts-liberation && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends libreoffice-writer-nogui fonts-liberation fonts-crosextra-carlito && rm -rf /var/lib/apt/lists/*
 COPY --from=deps /app /app
 COPY config /app/config
 COPY packages /app/packages

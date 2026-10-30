@@ -41,6 +41,7 @@ export function QuestionsTab({ b, editable, onDone }: { b: PlanBundle; editable:
     return Array.from(m.entries());
   }, [qs]);
   const done = qs.filter((q) => q.status === "answered" || q.status === "answered_by_files" || q.status === "skipped").length;
+  const needYou = qs.filter((q) => q.status === "open").length;
   const q = qs.find((x) => x.id === current);
   const idx = qs.findIndex((x) => x.id === current);
 
@@ -102,9 +103,25 @@ export function QuestionsTab({ b, editable, onDone }: { b: PlanBundle; editable:
             ))}
           </div>
         ))}
-        <p className="mt-2 text-[11px] text-slate-500">● answered · ◆ answered by files (skipped automatically) · ◐ partly known · – skipped</p>
+        <p className="mt-2 text-[11px] text-slate-500">● answered · ◆ covered by files (skipped automatically) · ○ needs you · – skipped</p>
       </aside>
       <section className="space-y-4">
+        {editable && (
+          <div className="card flex flex-wrap items-center gap-3 p-4">
+            <p className="text-sm">
+              {needYou === 0 ? (
+                <>The files cover every question. You can write the draft now.</>
+              ) : (
+                <>
+                  Only <strong>{needYou}</strong> of {qs.length} questions need you; the files cover the rest. Anything missing is marked “BCBA to confirm” in the draft.
+                </>
+              )}
+            </p>
+            <button className="btn-primary ml-auto" onClick={onDone}>
+              Write the draft now
+            </button>
+          </div>
+        )}
         {!q ? (
           <div className="card p-6 text-center">
             <p className="font-medium">All questions are done.</p>
@@ -119,8 +136,8 @@ export function QuestionsTab({ b, editable, onDone }: { b: PlanBundle; editable:
               {q.sectionTitle} · Question {idx + 1} of {qs.length}
             </div>
             {q.known && q.status !== "answered" && <div className="rounded-md bg-sky-50 p-3 text-sm text-sky-900">From the files: {q.known}</div>}
-            <p className="text-base font-medium">{q.status === "partial" ? `Anything to add or correct? ${q.text}` : q.text}</p>
-            {q.status === "answered_by_files" && <p className="text-sm text-slate-500">The files already answer this. Add anything you want, or move on.</p>}
+            <p className="text-base font-medium">{q.text}</p>
+            {q.status === "answered_by_files" && <p className="text-sm text-slate-500">Covered by the files. Add something only if it's missing or wrong.</p>}
             <div className="space-y-2">
               {thread.map((m, i) => (
                 <div key={i} className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${m.who === "bcba" ? "ml-auto bg-brand-600 text-white" : "bg-slate-100"}`}>

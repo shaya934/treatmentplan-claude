@@ -31,6 +31,9 @@ export function installUsageSink() {
   if (sinkInstalled) return;
   sinkInstalled = true;
   setUsageSink(async (u) => {
+    // Platform-level calls (e.g. converting the standard template) belong to no company;
+    // they are still in the ai_call log line, just not on a company's cost dashboard.
+    if (!u.tenantId) return;
     const c = await getPool().connect();
     try {
       await c.query("BEGIN");

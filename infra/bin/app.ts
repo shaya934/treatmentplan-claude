@@ -15,8 +15,15 @@ const cfg = envConfig(name, (k) => app.node.tryGetContext(k));
 const env = { account: cfg.account ?? process.env.CDK_DEFAULT_ACCOUNT, region: cfg.region };
 const prefix = `Aba${name === "prod" ? "Prod" : "Dev"}`;
 
+/** Fixed AZs instead of a context lookup, so synth needs no AWS credentials (CI) and the AZs never shift. */
+class AbaStack extends Stack {
+  get availabilityZones(): string[] {
+    return [`${cfg.region}a`, `${cfg.region}b`, `${cfg.region}c`];
+  }
+}
+
 // One platform stack (network, data, auth, app) avoids cross-stack grant cycles on the KMS key.
-const platform = new Stack(app, `${prefix}-Platform`, { env, terminationProtection: cfg.retainData });
+const platform = new AbaStack(app, `${prefix}-Platform`, { env, terminationProtection: cfg.retainData });
 const foundation = new Foundation(platform, "Foundation", cfg);
 new AppService(platform, "App", cfg, foundation);
 new SecurityStack(app, `${prefix}-Security`, cfg, foundation, { env, terminationProtection: cfg.retainData });

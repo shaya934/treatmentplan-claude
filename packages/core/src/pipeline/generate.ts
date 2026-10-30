@@ -1,8 +1,9 @@
 import { ai, type AiContext } from "../ai/client";
 import { narrativeSystem, REVIEW_SYSTEM } from "../ai/prompts";
+import { log } from "../logger";
 import { ReviewOutput, SectionOutput } from "../ai/schemas";
 import { checkGroup, linkGroups } from "../plan/consistency";
-import { findPlaceholders, HAS_PLACEHOLDER, isEmptyValue, placeholder, PLACEHOLDER_RE, valueToText, type FieldEntry, type FieldValue, type PlanContent, type TableRow } from "../plan/content";
+import { findPlaceholders, HAS_PLACEHOLDER, isEmptyValue, placeholder, PLACEHOLDER_RE, usDates, valueToText, type FieldEntry, type FieldValue, type PlanContent, type TableRow } from "../plan/content";
 import type { Field, Section, Template } from "../template/schema";
 import { findField, guidedQuestions } from "../template/schema";
 import { firstName, type BcbaAnswer, type ClientRecord, type Evidence, type ReviewItem } from "../types";
@@ -19,15 +20,26 @@ export interface SectionInput {
   clientFirstName: string;
 }
 
-/** Which fields generation may write: never static, calculated, or BCBA-completed fields. */
-export function generatableFields(section: Section, content: PlanContent): Field[] {
+/**
+ * Which fields generation may write: never static, calculated, or BCBA-completed fields.
+ * Content carried forward from the previous plan is kept as written unless the BCBA
+ * answered a question about that field this time (an answer means they want it changed).
+ */
+export function generatableFields(section: Section, content: PlanContent, answeredFieldIds: Set<string> = new Set()): Field[] {
   return section.fields.filter((f) => {
     if (f.type === "static" || f.calc) return false;
     const e = content[f.id];
     if (e?.status === "complete" || e?.status === "calculated") return false;
     if (e?.status === "prefilled" && !isEmptyValue(f, e.value)) return false;
+    if (e?.status === "carried_forward" && !isEmptyValue(f, e.value) && !answeredFieldIds.has(f.id)) return false;
     return true;
   });
+}
+
+/** Template fields covered by a question the BCBA has answered. */
+export function answeredFields(t: Template, answers: BcbaAnswer[]): Set<string> {
+  const answered = new Set(answers.map((a) => a.question_id));
+  return new Set(guidedQuestions(t).filter((q) => answered.has(q.id)).flatMap((q) => q.fieldIds));
 }
 
 export function relevantEvidence(fields: Field[], evidence: Evidence[], limit = 60): Evidence[] {
@@ -46,11 +58,11 @@ export function relevantAnswers(t: Template, section: Section, answers: BcbaAnsw
   return answers.filter((a) => qmap.has(a.question_id)).map((a) => ({ ...a, question: qmap.get(a.question_id)! }));
 }
 
-function lengthGuide(fields: Field[]): string {
+export function lengthGuide(fields: Field[]): string {
   return "Fields to write:\n" + fields.map((f) => `- ${f.id} (${f.type}, length: ${f.lengthType}${f.required ? ", required" : ""}): ${f.label}${f.help ? ` — ${f.help}` : ""}${f.columns ? ` | columns: ${f.columns.map((c) => c.id).join(", ")}` : ""}${f.options ? ` | options: ${f.options.join(" / ")}` : ""}`).join("\n");
 }
 
-function normalizeValue(f: Field, v: unknown, current: FieldValue): FieldValue {
+export function normalizeValue(f: Field, v: unknown, current: FieldValue): FieldValue {
   if (f.type === "table") {
     if (!Array.isArray(v)) return current;
     const cols = (f.columns ?? []).map((c) => c.id);
@@ -60,7 +72,8 @@ function normalizeValue(f: Field, v: unknown, current: FieldValue): FieldValue {
       const first = cols[0]!;
       const base = (Array.isArray(current) ? (current as TableRow[]) : []).map((r) => ({ ...r }));
       for (const r of rows) {
-        const target = base.find((b) => (b[first] ?? "").toLowerCase() === (r[first] ?? "").toLowerCase());
+        const key = (s: string | undefined) => (s ?? "").toLowerCase().split(/[:s]/)[0]!;
+        const target = base.find((b) => (b[first] ?? "").toLowerCase() === (r[first] ?? "").toLowerCase()) ?? base.find((b) => key(b[first]) && key(b[first]) === key(r[first]));
         if (target) for (const c of cols.slice(1)) if (r[c]) target[c] = r[c]!;
       }
       return base;
@@ -70,6 +83,7 @@ function normalizeValue(f: Field, v: unknown, current: FieldValue): FieldValue {
   if (f.type === "boolean") return typeof v === "boolean" ? v : current;
   if (f.type === "multiselect") return Array.isArray(v) ? (v as string[]).filter((x) => typeof x === "string" && (!f.options || f.options.includes(x))) : current;
   if (typeof v !== "string") return current;
+  if (f.type === "date") return usDates(v);
   if (f.type === "select" && f.options && !f.options.includes(v) && !HAS_PLACEHOLDER.test(v)) return placeholder(f.label);
   return v;
 }
@@ -83,7 +97,7 @@ export async function generateSection(
   answers: BcbaAnswer[],
   client: ClientRecord,
 ): Promise<{ updates: Record<string, FieldEntry> }> {
-  const fields = generatableFields(section, content);
+  const fields = generatableFields(section, content, answeredFields(t, answers));
   if (!fields.length) return { updates: {} };
   const ev = relevantEvidence(fields, evidence);
   const ans = relevantAnswers(t, section, answers);
@@ -95,12 +109,13 @@ export async function generateSection(
   const currentXml = section.fields.filter((f) => f.type !== "static" && !isEmptyValue(f, content[f.id]?.value)).map((f) => `<field id="${f.id}">${valueToText(content[f.id]!.value).slice(0, 1500)}</field>`).join("\n");
 
   const client_ = await ai();
+  const updating = fields.filter((f) => content[f.id]?.status === "carried_forward").map((f) => f.id);
   const out = await client_.structured({
     step: "narrative",
     ctx,
     system: narrativeSystem(lengthGuide(fields)),
     cachedContext: `Template section: ${section.title}${section.intro ? `\n${section.intro}` : ""}`,
-    user: `Client first name: ${input.clientFirstName}\n<evidence>\n${evidenceXml || "(none)"}\n</evidence>\n<answers>\n${answersXml || "(none)"}\n</answers>\n<current_fields>\n${currentXml || "(none)"}\n</current_fields>\nWrite the fields listed above. Use [BCBA to confirm: ...] for anything not supported by evidence or answers.`,
+    user: `Client first name: ${input.clientFirstName}\n<evidence>\n${evidenceXml || "(none)"}\n</evidence>\n<answers>\n${answersXml || "(none)"}\n</answers>\n<current_fields>\n${currentXml || "(none)"}\n</current_fields>\nWrite the fields listed above. Use [BCBA to confirm: ...] for anything not supported by evidence or answers.${updating.length ? `\nThese fields hold last period's plan text: ${updating.join(", ")}. Keep that wording and change only what the BCBA's answers or new evidence update.` : ""}`,
     toolName: "write_section",
     toolDescription: "Return the written value for each field, with the evidence/answer IDs behind each sentence.",
     schema: SectionOutput,
@@ -188,21 +203,31 @@ export async function buildReviewList(
     if (bad.length) items.push({ field_id: id, kind: "unsupported", detail: `Number(s) not found in files or BCBA answers: ${bad.join(", ")}` });
   }
 
-  // AI cross-check pass for conflicts between files and BCBA answers.
+  // AI cross-check pass for conflicts between files and BCBA answers. If it fails, the
+  // written draft is still kept: the deterministic checks above have run, and the BCBA is told.
   const client = await ai();
-  const review = await client.structured({
-    step: "review",
-    ctx,
-    system: REVIEW_SYSTEM,
-    user: `<evidence>\n${evidence.filter((e) => !e.deleted).slice(0, 200).map((e) => `<row id="${e.id}" date="${e.source_date ?? ""}">${e.fact_text}: ${e.value ?? ""} ${e.unit ?? ""}</row>`).join("\n")}\n</evidence>\n<answers>\n${answers.map((a) => `<answer question="${a.question_id}">${a.answer_text}</answer>`).join("\n")}\n</answers>\n<draft>\n${Object.entries(content).filter(([, e]) => e.value !== null).map(([id, e]) => `<field id="${id}">${valueToText(e.value).slice(0, 1200)}</field>`).join("\n")}\n</draft>`,
-    toolName: "review_plan",
-    toolDescription: "Report conflicts and unsupported claims.",
-    schema: ReviewOutput,
-    mockInput: { evidence, answers, content },
-    maxTokens: 3000,
-  });
-  for (const c of review.conflicts) items.push({ field_id: findField(t, c.field_id) ? c.field_id : null, kind: "conflict", detail: c.detail });
-  for (const u of review.unsupported) items.push({ field_id: findField(t, u.field_id) ? u.field_id : null, kind: "unsupported", detail: u.detail });
+  try {
+    const review = await client.structured({
+      step: "review",
+      ctx,
+      system: REVIEW_SYSTEM,
+      user: `<evidence>\n${evidence.filter((e) => !e.deleted).slice(0, 200).map((e) => `<row id="${e.id}" date="${e.source_date ?? ""}">${e.fact_text}: ${e.value ?? ""} ${e.unit ?? ""}</row>`).join("\n")}\n</evidence>\n<answers>\n${answers.map((a) => `<answer question="${a.question_id}">${a.answer_text}</answer>`).join("\n")}\n</answers>\n<draft>\n${Object.entries(content).filter(([, e]) => e.value !== null).map(([id, e]) => `<field id="${id}">${valueToText(e.value).slice(0, 1200)}</field>`).join("\n")}\n</draft>`,
+      toolName: "review_plan",
+      toolDescription: "Report conflicts and unsupported claims.",
+      schema: ReviewOutput,
+      mockInput: { evidence, answers, content },
+      maxTokens: 8000,
+    });
+    for (const c of review.conflicts) items.push({ field_id: findField(t, c.field_id) ? c.field_id : null, kind: "conflict", detail: c.detail });
+    for (const u of review.unsupported) items.push({ field_id: findField(t, u.field_id) ? u.field_id : null, kind: "unsupported", detail: u.detail });
+  } catch (e) {
+    log.warn({ event: "review_check_failed", planId: ctx.planId ?? undefined, error: e instanceof Error ? e.name : "unknown" });
+    items.push({
+      field_id: null,
+      kind: "unsupported",
+      detail: "The automatic cross-check of the draft against the files and answers could not run this time. Check numbers and conflicts by hand, or write the draft again.",
+    });
+  }
 
   const seen = new Set<string>();
   return items.filter((i) => {

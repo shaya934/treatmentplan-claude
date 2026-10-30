@@ -56,6 +56,62 @@ describe("clinical integrity", () => {
     }
   });
 
+  it("keeps carried-forward text unless the BCBA answered that field's question", async () => {
+    const { generatableFields, answeredFields } = await import("../src/pipeline/generate");
+    const { guidedQuestions, findField } = await import("../src/template/schema");
+    const q = guidedQuestions(T).find((x) => x.id === "strengths" || x.fieldIds.includes("strengths"))!;
+    const section = T.sections.find((s) => s.fields.some((f) => f.id === "strengths"))!;
+    const c = emptyContent(T);
+    c.strengths = { value: "Last period: strong visual matching and imitation.", status: "carried_forward", sources: ["previous_plan"] };
+    expect(findField(T, "strengths")).toBeDefined();
+    expect(generatableFields(section, c).map((f) => f.id)).not.toContain("strengths");
+    const answer = { id: "a", plan_id: "p", question_id: q.id, answer_text: "Now also requests with 3-word phrases.", input_mode: "typed", is_follow_up: false, created_at: "" };
+    expect(generatableFields(section, c, answeredFields(T, [answer as never])).map((f) => f.id)).toContain("strengths");
+    seen.length = 0;
+    const { updates } = await generateSection({ tenantId: "t" }, T, section, c, [], [], client);
+    expect(updates.strengths).toBeUndefined();
+  });
+
+  it("splits medications and services into the right table columns", async () => {
+    const { splitMedication, splitService } = await import("../src/pipeline/prefill");
+    expect(splitMedication("Medication: Melatonin 3 mg nightly at bedtime", "3", "mg")).toEqual({ medication: "Melatonin", dosage: "3 mg", frequency: "nightly at bedtime" });
+    expect(splitMedication("Guanfacine ER 1 mg, once daily")).toEqual({ medication: "Guanfacine ER", dosage: "1 mg", frequency: "once daily" });
+    expect(splitMedication("Fish oil supplement", "1", "capsule")).toEqual({ medication: "Fish oil supplement", dosage: "1 capsule", frequency: "" });
+    // A dose the BCBA corrected in the facts table wins over the original text.
+    expect(splitMedication("Medication: Melatonin 3 mg nightly at bedtime", "5 mg", "mg").dosage).toBe("5 mg");
+    expect(splitService("Speech therapy 2x/week, 30 min")).toEqual({ service: "Speech therapy", frequency: "2x/week, 30 min" });
+    expect(splitService("Occupational therapy 1x/week, 45 min")).toEqual({ service: "Occupational therapy", frequency: "1x/week, 45 min" });
+    expect(splitService("Parent training sessions delivered", "11")).toEqual({ service: "Parent training sessions delivered", frequency: "11" });
+  });
+
+  it("keeps the written draft when the AI cross-check fails, and says so on the review list", async () => {
+    const { generatePlan } = await import("../src/pipeline/generate");
+    setAiClient(new MockAiClient({ ...mockHandlers, review_plan: () => ({ nonsense: true }) }));
+    try {
+      const { content, review } = await generatePlan({ tenantId: "t" }, T, emptyContent(T), [], [], client);
+      expect(Object.values(content).some((e) => e.sentenceSources !== undefined || e.status === "needs_bcba")).toBe(true);
+      expect(review.some((r) => r.kind === "unsupported" && /cross-check .* could not run/.test(r.detail))).toBe(true);
+    } finally {
+      setAiClient(new Recording(mockHandlers));
+    }
+  });
+
+  it("shows every date as M/D/YYYY", async () => {
+    const { usDates } = await import("../src/plan/content");
+    expect(usDates("2026-09-24")).toBe("9/24/2026");
+    expect(usDates("2026-11-01 - 2027-04-29")).toBe("11/1/2026 - 4/29/2027");
+    expect(usDates("9/24/2026")).toBe("9/24/2026");
+  });
+
+  it("reads previous-plan dates in common formats and rejects impossible ones", async () => {
+    const { toIsoDate } = await import("../src/pipeline/import-plan");
+    expect(toIsoDate("4/12/2019")).toBe("2019-04-12");
+    expect(toIsoDate("2019-04-12")).toBe("2019-04-12");
+    expect(toIsoDate("April 12, 2019")).toBe("2019-04-12");
+    expect(toIsoDate("13/45/2019")).toBeNull();
+    expect(toIsoDate("unknown")).toBeNull();
+  });
+
   it("generation never writes outside the requested fields or invents sources", async () => {
     const bad = new MockAiClient({
       write_section: () => ({ fields: [{ field_id: "member_id", value: "999", sentences: [] }, { field_id: "strengths", value: "Likes music.", sentences: [{ text: "Likes music.", sources: ["made-up-id"] }] }] }),

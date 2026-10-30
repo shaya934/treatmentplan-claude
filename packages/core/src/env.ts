@@ -35,7 +35,7 @@ export function env(): AppEnv {
   };
   cached = {
     mode,
-    region: process.env.AWS_REGION ?? "us-east-1",
+    region: process.env.AWS_REGION ?? "us-east-2",
     databaseUrl: required(
       "DATABASE_URL",
       process.env.DB_HOST

@@ -8,6 +8,8 @@ import { storage } from "../storage";
 import type { Template } from "../template/schema";
 import type { Role } from "../types";
 import { log, tx, type Svc } from "./context";
+import { deleteFigures, deleteObjects } from "./figures";
+import { standardTemplate } from "./platform-template";
 
 /** Users, audit search, usage, dashboards, tenants, support grants, retention. */
 
@@ -147,8 +149,8 @@ export async function listTenants(s: Svc) {
   });
 }
 
-/** Onboard a company: tenant, first admin, and a copy of the starter template. */
-export async function createTenant(s: Svc, input: { name: string; slug: string; adminEmail: string; adminName: string; tempPassword: string; template: Template }) {
+/** Onboard a company: tenant, first admin, and a copy of the platform standard template. */
+export async function createTenant(s: Svc, input: { name: string; slug: string; adminEmail: string; adminName: string; tempPassword: string; template?: Template }) {
   if (!/^[a-z0-9-]{2,40}$/.test(input.slug)) throw new SafeError("Slug must be lowercase letters, numbers and dashes");
   assertCan(s.p, "tenant.manage");
   const ident = await provisionIdentity(input.adminEmail, "company_admin", input.tempPassword);
@@ -158,7 +160,8 @@ export async function createTenant(s: Svc, input: { name: string; slug: string; 
     await t.query("INSERT INTO users (tenant_id, email, role, name, cognito_sub, password_hash) VALUES ($1,$2,'company_admin',$3,$4,$5)", [tenantId, input.adminEmail.toLowerCase(), input.adminName, ident.cognitoSub, ident.passwordHash]);
     await audit(t, { tenantId: null, userId: s.p.userId, action: "create", entity: "tenant", entityId: tenantId }, s.meta);
   });
-  await seedTemplate(tenantId, { ...input.template, branding: { ...input.template.branding, companyName: input.name, footer: input.name } });
+  const template = input.template ?? (await withCtx({ tenantId: null, userId: s.p.userId, role: "super_admin" }, standardTemplate)).template;
+  await seedTemplate(tenantId, { ...template, branding: { ...template.branding, companyName: input.name, footer: input.name } });
   return { id: tenantId };
 }
 
@@ -228,6 +231,7 @@ export async function runRetention(tenantId: string, now = new Date()): Promise<
     const files = await many<{ id: string; s3_key: string }>(t, "SELECT id, s3_key FROM files WHERE uploaded_at < $1", [cutoff]);
     for (const f of files) {
       await storage().delete(f.s3_key);
+      await deleteObjects(await deleteFigures(t, "file_id", f.id));
       await t.query("UPDATE evidence SET file_id = NULL WHERE file_id = $1", [f.id]);
       await t.query("DELETE FROM files WHERE id = $1", [f.id]);
     }
@@ -240,6 +244,7 @@ export async function runRetention(tenantId: string, now = new Date()): Promise<
 }
 
 async function purgePlan(t: import("../db").Tx, planId: string) {
+  await deleteObjects(await deleteFigures(t, "plan_id", planId));
   for (const table of ["evidence", "bcba_answers", "review_items", "chat_messages", "plan_versions"]) {
     await t.query(`DELETE FROM ${table} WHERE plan_id = $1`, [planId]);
   }
@@ -258,6 +263,7 @@ export async function deleteClientData(s: Svc, clientId: string) {
     await t.query("SELECT set_config('app.role', 'system', true), set_config('app.retention', 'on', true)");
     const files = await many<{ s3_key: string }>(t, "SELECT s3_key FROM files WHERE client_id = $1", [clientId]);
     for (const f of files) await storage().delete(f.s3_key);
+    await deleteObjects(await deleteFigures(t, "client", clientId));
     const plans = await many<{ id: string }>(t, "SELECT id FROM plans WHERE client_id = $1 ORDER BY created_at DESC", [clientId]);
     await t.query("UPDATE evidence SET file_id = NULL WHERE file_id IN (SELECT id FROM files WHERE client_id = $1)", [clientId]);
     await t.query("DELETE FROM files WHERE client_id = $1", [clientId]);

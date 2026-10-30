@@ -3,12 +3,18 @@ import QRCode from "qrcode";
 import { useEffect, useState } from "react";
 import { call } from "@/lib/client";
 
-type Step = { step: "password" } | { step: "mfa"; challenge: string } | { step: "mfa_setup"; challenge: string; otpauthUri: string; secret: string };
+type Step =
+  | { step: "password" }
+  | { step: "new_password"; challenge: string }
+  | { step: "mfa"; challenge: string }
+  | { step: "mfa_setup"; challenge: string; otpauthUri: string; secret: string };
 
 export default function Login() {
   const [step, setStep] = useState<Step>({ step: "password" });
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
   const [code, setCode] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -23,10 +29,18 @@ export default function Login() {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setErr("");
+    if (step.step === "new_password" && newPassword !== confirm) {
+      setErr("The two passwords don't match.");
+      return;
+    }
     setBusy(true);
     try {
       if (step.step === "password") {
         const r = await call<Step | { step: "done" }>("/api/auth/login", { body: { email, password } });
+        if (r.step === "done") window.location.href = "/";
+        else setStep(r as Step);
+      } else if (step.step === "new_password") {
+        const r = await call<Step | { step: "done" }>("/api/auth/new-password", { body: { challenge: step.challenge, password: newPassword } });
         if (r.step === "done") window.location.href = "/";
         else setStep(r as Step);
       } else {
@@ -61,6 +75,19 @@ export default function Login() {
             </div>
           </>
         )}
+        {step.step === "new_password" && (
+          <>
+            <p className="text-sm">Choose a new password to replace the temporary one: at least 12 characters, with upper and lower case letters, a number and a symbol.</p>
+            <div>
+              <label className="label">New password</label>
+              <input className="input" type="password" autoComplete="new-password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} autoFocus required />
+            </div>
+            <div>
+              <label className="label">Confirm new password</label>
+              <input className="input" type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} required />
+            </div>
+          </>
+        )}
         {step.step === "mfa_setup" && (
           <div className="space-y-2 text-sm">
             <p>Set up your authenticator app: scan this code, then enter the 6-digit code it shows.</p>
@@ -68,7 +95,7 @@ export default function Login() {
             <p className="break-all text-center font-mono text-xs text-slate-500">{step.secret}</p>
           </div>
         )}
-        {step.step !== "password" && (
+        {(step.step === "mfa" || step.step === "mfa_setup") && (
           <div>
             <label className="label">Authenticator code</label>
             <input className="input text-center font-mono tracking-widest" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))} autoFocus required />
@@ -76,7 +103,7 @@ export default function Login() {
         )}
         {err && <p className="text-sm text-red-600">{err}</p>}
         <button className="btn-primary w-full justify-center" disabled={busy}>
-          {busy ? "Checking…" : step.step === "password" ? "Continue" : "Verify"}
+          {busy ? "Checking…" : step.step === "password" ? "Continue" : step.step === "new_password" ? "Set password" : "Verify"}
         </button>
       </form>
     </div>

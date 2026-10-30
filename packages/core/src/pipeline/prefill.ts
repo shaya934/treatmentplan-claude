@@ -11,12 +11,45 @@ import type { BcbaInfo, ClientRecord, Evidence, PlanRecord } from "../types";
  * here, so no number can be invented at this step.
  */
 
-const TOOL_RE = /(Vineland-?3?|VB-MAPP|ABLLS-?R?|ABAS-?3?|DP-?4|ESDM|SRS-?2|ADOS-?2?)/i;
+/**
+ * Who the client is: carried from the previous plan even though these fields
+ * are marked carryForward=false. The client record still wins when it has a
+ * value (pre-fill step 2 runs after carry-forward). Period-specific fields
+ * (report date, authorization dates, signatures) are never carried.
+ */
+export const IDENTITY_FIELDS = new Set(["client_name", "dob", "gender", "insurance", "member_id"]);
+
+const TOOL_RE =/(Vineland-?3?|VB-MAPP|ABLLS-?R?|ABAS-?3?|DP-?4|ESDM|SRS-?2|ADOS-?2?)/i;
 
 function isoToUs(d: string | null | undefined): string {
   if (!d) return "";
   const m = d.match(/^(\d{4})-(\d{2})-(\d{2})/);
   return m ? `${Number(m[2])}/${Number(m[3])}/${m[1]}` : d;
+}
+
+const DOSE_RE = /^(.*?)\s*(\d+(?:\.\d+)?)\s*(mg|mcg|µg|g|ml|mL|units?|IU|tabs?|tablets?|capsules?|puffs?)\b[,;]?\s*(.*)$/i;
+
+/**
+ * "Melatonin 3 mg nightly at bedtime" -> name "Melatonin", dosage "3 mg", frequency "nightly at bedtime".
+ * The dose comes from the fact's value (what the BCBA corrects in the facts table), else from the text.
+ */
+export function splitMedication(text: string, value?: string | null, unit?: string | null): { medication: string; dosage: string; frequency: string } {
+  const t = text.replace(/^medication:?\s*/i, "").trim();
+  const m = t.match(DOSE_RE);
+  const v = value?.trim();
+  const dosage = v ? (/[a-zµ]/i.test(v) ? v : `${v} ${unit ?? m?.[3] ?? ""}`.trim()) : m ? `${m[2]} ${m[3]}` : "";
+  if (m && m[1]) return { medication: m[1].trim(), dosage, frequency: m[4]!.trim() };
+  return { medication: t, dosage, frequency: "" };
+}
+
+const FREQ_RE = /^(.*?)[,;:]?\s+((?:\d+\s*(?:x|times)\s*(?:\/|per|a)\s*(?:week|wk|month|day)|weekly|biweekly|monthly|daily|once|twice)\b.*)$/i;
+
+/** "Speech therapy 2x/week, 30 min" -> service "Speech therapy", frequency "2x/week, 30 min". */
+export function splitService(text: string, value?: string | null): { service: string; frequency: string } {
+  const t = text.replace(/^service:?\s*/i, "").trim();
+  const m = t.match(FREQ_RE);
+  if (m && m[1]) return { service: m[1].trim(), frequency: m[2]!.trim() };
+  return { service: t, frequency: value ?? "" };
 }
 
 export function ageOn(dob: string, on: Date): number | null {
@@ -83,7 +116,7 @@ function prefillFresh({ template, plan, client, bcba, evidence, previous }: Pref
   // 1. Carry forward from the previous finalized plan (reassessments).
   if (previous && plan.type === "reassessment") {
     for (const f of allFields(template)) {
-      if (f.type === "static" || !f.carryForward) continue;
+      if (f.type === "static" || (!f.carryForward && !IDENTITY_FIELDS.has(f.id))) continue;
       const prev = previous[f.id];
       if (prev && !isEmptyValue(f, prev.value)) set(c, f.id, JSON.parse(JSON.stringify(prev.value)), "carried_forward", ["previous_plan"]);
     }
@@ -112,6 +145,10 @@ function prefillFresh({ template, plan, client, bcba, evidence, previous }: Pref
   }
   if (plan.period_start && plan.period_end) set(c, "auth_period_requested", `${isoToUs(plan.period_start)} - ${isoToUs(plan.period_end)}`, "calculated", ["plan_record"]);
   if (plan.final_date) set(c, "plan_final_date", isoToUs(plan.final_date), "calculated", ["plan_record"]);
+  // Form templates: report started = plan created, report completed = plan finalized.
+  const created = (plan as { created_at?: string | Date }).created_at;
+  if (created && findField(template, "report_started")) set(c, "report_started", isoToUs(new Date(created).toISOString()), "calculated", ["plan_record"]);
+  if (plan.final_date && findField(template, "report_date")) set(c, "report_date", isoToUs(plan.final_date), "calculated", ["plan_record"]);
 
   // 4. Evidence table (only rows not deleted by the BCBA).
   const ev = evidence.filter((e) => !e.deleted);
@@ -119,7 +156,10 @@ function prefillFresh({ template, plan, client, bcba, evidence, previous }: Pref
   for (const e of ev) {
     const text = e.fact_text;
     const src = [e.id];
-    if (e.category === "score") {
+    if (e.category === "score" && /^graph:/i.test(text)) {
+      // Values read off a graph are trends, not assessment scores; they reach the plan through the narrative.
+      continue;
+    } else if (e.category === "score") {
       const tool = text.match(TOOL_RE)?.[1] ?? "";
       const domain = text
         .replace(TOOL_RE, "")
@@ -131,7 +171,7 @@ function prefillFresh({ template, plan, client, bcba, evidence, previous }: Pref
       if (!scores.has(k)) scores.set(k, []);
       scores.get(k)!.push({ ...e, fact_text: `${tool}|${domain}` });
     } else if (e.category === "medication") {
-      addRow(c, template, "medications", { medication: text.replace(/^medication:?\s*/i, ""), dosage: e.value ?? "", frequency: e.unit ?? "", notes: "" }, src);
+      addRow(c, template, "medications", { ...splitMedication(text, e.value, e.unit), notes: "" }, src);
     } else if (e.category === "authorization") {
       const code = text.match(/\b(9715[1-8]|H0032)\b/)?.[1];
       const n = parseNumber(e.value);
@@ -155,8 +195,8 @@ function prefillFresh({ template, plan, client, bcba, evidence, previous }: Pref
         const prev = c.additional_diagnoses?.status === "prefilled" ? String(c.additional_diagnoses.value ?? "") : "";
         set(c, "additional_diagnoses", prev ? `${prev}; ${e.value}` : e.value, "prefilled", [...(c.additional_diagnoses?.status === "prefilled" ? c.additional_diagnoses.sources : []), ...src]);
       }
-    } else if (e.category === "service") {
-      addRow(c, template, "other_services", { service: text.replace(/^service:?\s*/i, ""), frequency: e.value ?? "" }, src);
+    } else if (e.category === "service" && !/parent|caregiver|97156/i.test(text)) {
+      addRow(c, template, "other_services", splitService(text, e.value), src);
     } else if (e.category === "iep" && /school|daycare/i.test(text) && e.value && /name/i.test(text)) {
       set(c, "school_name", e.value, "prefilled", src);
     } else if (e.category === "date" && e.source_date) {
