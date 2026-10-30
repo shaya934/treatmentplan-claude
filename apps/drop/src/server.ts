@@ -1,10 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { fork } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { setAiClient, BedrockAiClient } from "@aba/core/ai/client";
-import { setOcr, TextractOcr } from "@aba/core/ocr";
-import { documentsToForm } from "@aba/core/pipeline/from-documents";
 import { audit, cfg, HttpError } from "./config";
 import { login, logout, newPassword, mfa, readSession, refreshSession } from "./auth";
 import { store } from "./store";
@@ -14,9 +12,6 @@ import { store } from "./store";
  * get the company's PDF form back filled in. No database; files live in an
  * encrypted S3 bucket that deletes everything after 24 hours.
  */
-
-setAiClient(new BedrockAiClient(cfg.region));
-setOcr(new TextractOcr(cfg.region, cfg.bucket ?? "local"));
 
 const MAX_FILE = 50 * 1024 * 1024;
 const MAX_FILES = 40;
@@ -65,21 +60,22 @@ const json = async (req: IncomingMessage) => {
   }
 };
 
-async function process(owner: string, email: string, job: string) {
+/** Fill the form in its own process (job.ts), so building the PDF never stalls the website. */
+function startJob(owner: string, email: string, job: string) {
   running.add(job);
-  try {
-    const docs = await store.inputs(owner, job);
-    const pdf = await documentsToForm({ tenantId: "we-achieve", planId: job }, docs);
-    await store.putOutput(owner, job, pdf);
-    await store.setStatus(owner, job, { state: "done" });
-    audit("form_created", email, { jobId: job, count: docs.length });
-  } catch (e) {
-    console.error(JSON.stringify({ event: "job_failed", jobId: job, errorName: (e as Error).name }));
-    await store.setStatus(owner, job, { state: "failed", message: "Something went wrong reading the documents. Please try again." });
-    audit("form_failed", email, { jobId: job });
-  } finally {
-    running.delete(job);
+  if (!cfg.bucket) {
+    // Local development keeps files in memory, which only this process can see.
+    void import("./job").then((m) => m.runJob(owner, email, job)).finally(() => running.delete(job));
+    return;
   }
+  const child = fork(join(import.meta.dirname, "job.ts"), [owner, email, job]);
+  child.on("exit", async (code) => {
+    running.delete(job);
+    if (code !== 0 && (await store.getStatus(owner, job))?.state === "working") {
+      await store.setStatus(owner, job, { state: "failed", message: "Something went wrong reading the documents. Please try again." });
+      audit("form_failed", email, { jobId: job });
+    }
+  });
 }
 
 async function handle(req: IncomingMessage, res: ServerResponse) {
@@ -148,7 +144,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     if (status.state !== "new") throw new HttpError(409, "This form was already started.");
     if (!(await store.inputCount(user.sub, job))) throw new HttpError(400, "Add at least one document first.");
     await store.setStatus(user.sub, job, { state: "working" });
-    void process(user.sub, user.email, job);
+    startJob(user.sub, user.email, job);
     return send(res, 200, { ok: true }, cookie);
   }
   if (req.method === "GET" && !m[2]) {
@@ -181,11 +177,15 @@ const SECURITY_HEADERS = {
   "cache-control": "no-store",
 };
 
-createServer((req, res) => {
+const server = createServer((req, res) => {
   for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.setHeader(k, v);
   handle(req, res).catch((e) => {
     if (e instanceof HttpError) return send(res, e.status, { error: e.message });
     console.error(JSON.stringify({ event: "request_failed", errorName: (e as Error).name }));
     send(res, 500, { error: "Something went wrong. Please try again." });
   });
-}).listen(cfg.port, () => console.log(JSON.stringify({ event: "listening", port: cfg.port })));
+});
+// Longer than the load balancer's 300 s idle timeout, so Node never closes a connection the load balancer is about to reuse.
+server.keepAliveTimeout = 310_000;
+server.headersTimeout = 320_000;
+server.listen(cfg.port, () => console.log(JSON.stringify({ event: "listening", port: cfg.port })));

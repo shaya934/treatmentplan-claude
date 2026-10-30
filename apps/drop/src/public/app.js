@@ -146,14 +146,18 @@ $("create").addEventListener("click", async () => {
   }
 });
 
+let pollFailures = 0;
 async function poll() {
   try {
     const s = await (await api("GET", `/api/jobs/${job}`)).json();
+    pollFailures = 0;
     if (s.state === "working") return setTimeout(poll, 4000);
     $("working").hidden = true;
     if (s.state === "done") $("done").hidden = false;
     else error(s.message || "Something went wrong. Please start over.");
   } catch (err) {
+    // A dropped check (network blip, busy server) is retried; only give up after several in a row.
+    if (currentScreen() === "app" && ++pollFailures < 8) return setTimeout(poll, 5000);
     $("working").hidden = true;
     error(err.message);
   }
