@@ -70,7 +70,7 @@ async function record(ctx: AiContext, step: AiStep, key: ModelKey, id: string, i
 export class BedrockAiClient implements AiClient {
   private client: BedrockRuntimeClient;
   constructor(region = env().region) {
-    this.client = new BedrockRuntimeClient({ region });
+    this.client = new BedrockRuntimeClient({ region, maxAttempts: 8, retryMode: "adaptive" }); // new accounts have low per-minute quotas
   }
 
   async structured<T>(req: StructuredRequest<T>): Promise<T> {

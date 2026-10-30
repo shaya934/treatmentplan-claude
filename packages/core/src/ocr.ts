@@ -24,12 +24,15 @@ function linesByPage(blocks: Block[]): string[] {
   return Array.from({ length: pages.length }, (_, i) => (pages[i] ?? []).join("\n"));
 }
 
-class TextractOcr implements Ocr {
-  private client = new TextractClient({ region: env().region });
+export class TextractOcr implements Ocr {
+  private client: TextractClient;
+  constructor(region = env().region, private bucket = env().bucket) {
+    this.client = new TextractClient({ region });
+  }
 
   async pdf(s3Key: string) {
     const start = await this.client.send(
-      new StartDocumentTextDetectionCommand({ DocumentLocation: { S3Object: { Bucket: env().bucket, Name: s3Key } } }),
+      new StartDocumentTextDetectionCommand({ DocumentLocation: { S3Object: { Bucket: this.bucket, Name: s3Key } } }),
     );
     const jobId = start.JobId!;
     const blocks: Block[] = [];

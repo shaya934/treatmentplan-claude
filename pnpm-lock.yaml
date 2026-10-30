@@ -26,6 +26,43 @@ importers:
         specifier: ^3.2.7
         version: 3.2.7(@types/node@22.20.5)(esbuild@0.28.2)(jiti@1.21.7)(tsx@4.23.15)
 
+  apps/drop:
+    dependencies:
+      '@aba/config':
+        specifier: workspace:*
+        version: link:../../config
+      '@aba/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@aws-sdk/client-cognito-identity-provider':
+        specifier: ^3.1156.0
+        version: 3.1156.0
+      '@aws-sdk/client-s3':
+        specifier: ^3.1156.0
+        version: 3.1156.0
+      aws-jwt-verify:
+        specifier: ^5.2.1
+        version: 5.2.1
+      jose:
+        specifier: ^6.2.13
+        version: 6.2.13
+      qrcode:
+        specifier: ^1.5.4
+        version: 1.5.4
+    devDependencies:
+      '@types/node':
+        specifier: ^22.20.5
+        version: 22.20.5
+      '@types/qrcode':
+        specifier: ^1.5.6
+        version: 1.5.6
+      tsx:
+        specifier: ^4.23.15
+        version: 4.23.15
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
   apps/web:
     dependencies:
       '@aba/config':
