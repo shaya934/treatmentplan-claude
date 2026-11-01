@@ -31,6 +31,12 @@ const MAX_CHARS = 400_000;
 const PARALLEL = 2;
 
 export async function documentsToForm(ctx: AiContext, docs: InputDocument[], today = new Date()): Promise<Buffer> {
+  const { content, figures } = await formContentFromDocuments(ctx, docs, today);
+  return fillWeAchieveForm({ content, firstName: firstName(String(content.client_name?.value ?? "")), draft: true, figures, footer: "We Achieve ABA" });
+}
+
+/** The form's answers (and graphs) read from the documents, before they are typed into the PDF. */
+export async function formContentFromDocuments(ctx: AiContext, docs: InputDocument[], today = new Date()): Promise<{ content: PlanContent; figures: Figure[] }> {
   const t = WE_ACHIEVE_FORM_TEMPLATE;
   const parts: string[] = [];
   const figures: Figure[] = [];
@@ -86,7 +92,7 @@ export async function documentsToForm(ctx: AiContext, docs: InputDocument[], tod
   const age = isNaN(+dob) ? null : ageOn(dob.toISOString().slice(0, 10), today);
   if (age !== null) content.age = { value: String(age), status: "calculated", sources: [] };
 
-  return fillWeAchieveForm({ content, firstName: firstName(String(content.client_name?.value ?? "")), draft: true, figures, footer: "We Achieve ABA" });
+  return { content, figures };
 }
 
 /** "Testcase, Ava" or "Ava Testcase" -> "Ava". */

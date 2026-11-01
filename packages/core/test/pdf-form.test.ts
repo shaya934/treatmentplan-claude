@@ -47,7 +47,7 @@ describe("We Achieve PDF form", () => {
     expect(text.join(" ")).not.toContain("Anabelle");
   });
 
-  it("puts long answers and graphs on added pages before the signature page and renumbers", async () => {
+  it("grows a box for a long answer, puts graphs before the signature page and renumbers", async () => {
     const png = await readFile(join(import.meta.dirname, "..", "assets", "we-achieve-logo.png"));
     const long = "Long developmental history sentence for testing. ".repeat(80);
     const pdf = await fillWeAchieveForm({
@@ -60,8 +60,9 @@ describe("We Achieve PDF form", () => {
     const { count, text } = await pages(pdf);
     expect(count).toBeGreaterThan(13);
     const added = text.slice(13 - 1, count - 1).join(" ");
-    expect(added).toContain("Continued Answers");
-    expect(added).toContain("Developmental History (continued from page 1)");
+    expect(added).not.toContain("Continued Answers"); // the box grew instead
+    expect(text.join(" ").split("for testing.").length - 1).toBe(80); // the whole answer, written once (not repeated under the cut page pieces)
+    expect(text[2]).toContain("Medical"); // the form's own page 2 follows the grown box unchanged
     expect(added).toContain("Figure 1. Mands");
     expect(text[count - 1]).toContain("Provider Signature"); // signature page stays last
     expect(text[count - 1]).toContain(`Page ${count} of ${count}`);

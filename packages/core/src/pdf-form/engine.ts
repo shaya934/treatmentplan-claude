@@ -7,8 +7,11 @@ import { PDFDocument, rgb, type PDFFont, type PDFPage } from "pdf-lib";
  * Fill a company's own (flat) PDF form without changing it: answers are typed
  * into the existing blanks, found by their label text and the cell rectangles
  * drawn on the page (both recorded once in a layout file). Sentences that
- * contain the client's name or an inline blank are retyped in place. Answers
- * that don't fit continue on added pages, which also hold the graphs.
+ * contain the client's name or an inline blank are retyped in place. A box too
+ * small for its answer grows where it is: the page is cut below the box, the
+ * box is extended, and the rest of the page moves down (onto a following page
+ * when needed). Pages without a long answer stay exactly as they are. Graphs
+ * go on added pages before the signature page.
  */
 
 export interface LayoutItem {
@@ -41,6 +44,14 @@ const BLACK = rgb(0, 0, 0);
 const WHITE = rgb(1, 1, 1);
 const YELLOW = rgb(1, 0.95, 0.4);
 const MIN_SIZE = 6.8;
+/** Boxes shrink their text at most this far before they grow instead. */
+const GROW_SIZE = 7.4;
+/** The form's content area on every page; below it is the footer. */
+const CONTENT_TOP = 774;
+const CONTENT_BOTTOM = 69;
+/** Half the width of the form's table lines plus a little: cuts sit this far above a border. */
+const BORDER = 1.1;
+const LINE = 1.4;
 
 const norm = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
 
@@ -57,6 +68,27 @@ export interface Overflow {
   fromPage: number;
 }
 
+/** The invisible frame every form page has around its content area. */
+const isFrame = (e: { o: "h" | "v"; c: number; a: number; b: number }) =>
+  e.b - e.a >= 600 || (e.o === "h" && e.b - e.a > 560 && (Math.abs(e.c - CONTENT_BOTTOM) < 1 || Math.abs(e.c - CONTENT_TOP) < 1));
+
+/** The drawing calls the filler uses, on a form page (recorded) or on an output page (direct). */
+type Canvas = Pick<PDFPage, "drawText" | "drawRectangle" | "drawLine">;
+
+/** Lines of an answer that continue below its box, in a strip added under the box's row. */
+interface Grow {
+  p: number;
+  /** Where the page is cut: just above the box's bottom border. */
+  cut: number;
+  x: number;
+  lines: string[];
+  size: number;
+  lead: number;
+  /** Baseline of the first continued line below the top of the strip (keeps the box's line spacing). */
+  drop: number;
+  gap: { open: boolean };
+}
+
 export interface Figure {
   png: Buffer;
   title: string;
@@ -66,6 +98,8 @@ export interface Figure {
 
 export class FormFiller {
   overflow: Overflow[] = [];
+  private grows: Grow[] = [];
+  private ops: Array<{ p: number; y: number; run: (pg: PDFPage, dy: number) => void }> = [];
   private lines: Line[];
   private constructor(
     readonly doc: PDFDocument,
@@ -96,8 +130,18 @@ export class FormFiller {
     return new FormFiller(doc, layout, font, bold);
   }
 
-  page(p: number): PDFPage {
-    return this.doc.getPage(p - 1);
+  /**
+   * Drawing on form page p. Nothing touches the page itself until finish(): each call is
+   * recorded with its height on the page and replayed where that part of the page ends up,
+   * so every answer is written exactly once even when the page is cut and moved.
+   */
+  page(p: number): Canvas {
+    const rec = (y: number, run: (pg: PDFPage, dy: number) => void) => this.ops.push({ p, y, run });
+    return {
+      drawText: (t, o = {}) => rec(o.y ?? 0, (pg, dy) => pg.drawText(t, { ...o, y: (o.y ?? 0) + dy })),
+      drawRectangle: (o = {}) => rec((o.y ?? 0) + (o.height ?? 0) / 2, (pg, dy) => pg.drawRectangle({ ...o, y: (o.y ?? 0) + dy })),
+      drawLine: (o) => rec((o.start.y + o.end.y) / 2, (pg, dy) => pg.drawLine({ ...o, start: { ...o.start, y: o.start.y + dy }, end: { ...o.end, y: o.end.y + dy } })),
+    };
   }
 
   /** The n-th line (1-based) on page p whose text contains `text`. */
@@ -156,6 +200,14 @@ export class FormFiller {
     return { p, x0, y0, x1, y1 };
   }
 
+  cellOrNull(p: number, x: number, y: number): LayoutRect | null {
+    try {
+      return this.cellAt(p, x, y);
+    } catch {
+      return null;
+    }
+  }
+
   /** The cell to the right of the cell holding a point. */
   cellRightOf(p: number, x: number, y: number): LayoutRect {
     return this.cellRight(this.cellAt(p, x, y));
@@ -202,7 +254,8 @@ export class FormFiller {
    * Draw one line; "[BCBA to confirm: ...]" gaps get a yellow highlight. Pass the same `gap`
    * state for every line of one answer so a gap that wraps onto the next line stays highlighted.
    */
-  draw(p: number, x: number, y: number, text: string, size: number, b = false, gap: { open: boolean } = { open: false }) {
+  draw(p: number | Canvas, x: number, y: number, text: string, size: number, b = false, gap: { open: boolean } = { open: false }) {
+    const pg = typeof p === "number" ? this.page(p) : p;
     const segs: Array<[string, boolean]> = [];
     let rest = text;
     if (gap.open) {
@@ -231,8 +284,8 @@ export class FormFiller {
     for (const [part, hl] of segs) {
       if (!part) continue;
       const w = this.width(part, size, b);
-      if (hl) this.page(p).drawRectangle({ x: cx, y: y - size * 0.25, width: w, height: size * 1.15, color: YELLOW });
-      this.page(p).drawText(part, { x: cx, y, size, font: b ? this.bold : this.font, color: BLACK });
+      if (hl) pg.drawRectangle({ x: cx, y: y - size * 0.25, width: w, height: size * 1.15, color: YELLOW });
+      pg.drawText(part, { x: cx, y, size, font: b ? this.bold : this.font, color: BLACK });
       cx += w;
     }
   }
@@ -278,8 +331,8 @@ export class FormFiller {
   }
 
   /**
-   * Text in a box from `top` down: shrink to fit; if it still doesn't fit, fill the box,
-   * end with "(continued on added pages)" and put the full answer in the addendum.
+   * Text in a box from `top` down: shrink a little to fit; if it still doesn't fit, the box
+   * grows (see finish). Boxes that aren't a whole cell fall back to the added pages.
    */
   box(p: number, x0: number, top: number, x1: number, bottom: number, text: string, label: string, size = 8.2) {
     if (!text.trim()) return;
@@ -287,7 +340,7 @@ export class FormFiller {
     let s = size;
     let lines = this.wrap(text, width, s);
     const fits = (n: number, sz: number) => n * sz * 1.25 <= top - bottom;
-    while (!fits(lines.length, s) && s > MIN_SIZE) {
+    while (!fits(lines.length, s) && s > Math.min(size, GROW_SIZE)) {
       s -= 0.2;
       lines = this.wrap(text, width, s);
     }
@@ -295,6 +348,17 @@ export class FormFiller {
     if (!fits(lines.length, s)) {
       const marker = this.compactGap(text, width, s);
       if (marker) return this.draw(p, x0, top - s, marker, s);
+      const cell = this.cellOrNull(p, x0 + 1, bottom + 1);
+      if (cell && bottom - cell.y0 <= 4) {
+        // Fill the box down to its border, then continue in the strip at the same line spacing.
+        const cut = cell.y0 + BORDER;
+        const inBox = Math.max(1, Math.floor((top - s - (cut + s * 0.3)) / lead) + 1);
+        const gap = { open: false };
+        lines.slice(0, inBox).forEach((l, i) => this.draw(p, x0, top - s - i * lead, l, s, false, gap));
+        const nextBaseline = top - s - inBox * lead;
+        this.grows.push({ p, cut, x: x0, lines: lines.slice(inBox), size: s, lead, drop: Math.max(s * 0.85, cut - nextBaseline), gap });
+        return;
+      }
       const room = Math.max(1, Math.floor((top - bottom) / lead));
       lines = [...lines.slice(0, room - 1), "(continued on the added pages)"];
       this.overflow.push({ label, text, fromPage: p });
@@ -354,18 +418,133 @@ export class FormFiller {
   }
 
   /**
-   * Added pages (before the last page) for long answers and graphs, then renumber every
-   * "Page X of N" footer. `footer` is the company line repeated on added pages.
+   * Lay the filled pages out again: each page starts a new page; a page with a grown box is
+   * cut into bands (at the box and between sections), the box's extra lines go in a strip
+   * under its row, and bands that no longer fit move to a following page. Added pages for
+   * answers that still didn't fit and for graphs go before page `insertBefore`; then every
+   * "Page X of N" footer is renumbered. `footer` is the company line on the added pages.
    */
   async finish(figures: Figure[], footer: string, insertBefore: number) {
     const W = 612;
     const H = 792;
-    const added: PDFPage[] = [];
-    const figs: Array<{ page: PDFPage; x: number; y: number; w: number; h: number; png: Buffer }> = [];
+    const n = this.doc.getPageCount();
+    const originals = this.doc.getPages();
+    // The form's own "Page X of 13" goes; every page gets the new count at the end.
+    const footerItems = this.layout.items.filter((i) => /^Page \d+ of \d+$/.test(i.s.trim()));
+    originals.forEach((_, idx) => {
+      for (const it of footerItems.filter((i) => i.p === idx + 1)) this.page(idx + 1).drawRectangle({ x: it.x - 2, y: it.y - 3, width: it.w + 8, height: it.size + 5, color: WHITE });
+    });
+
+    const out: PDFPage[] = [];
+    const addPage = () => {
+      const pg = this.doc.addPage([W, H]);
+      out.push(pg);
+      return pg;
+    };
+
+    /** Replay page p's recorded drawing: each call goes where its part of the page was placed. */
+    const replay = (p: number, placed: Array<{ top: number; bottom: number; pg: PDFPage; dy: number }>, footers: PDFPage[]) => {
+      for (const op of this.ops.filter((o) => o.p === p)) {
+        if (op.y < CONTENT_BOTTOM - 3) {
+          for (const f of footers) op.run(f, 0);
+          continue;
+        }
+        const at = placed.find((b) => op.y <= b.top && op.y > b.bottom) ?? placed[placed.length - 1]!;
+        op.run(at.pg, at.dy);
+      }
+    };
+
+    const layOut = async (p: number) => {
+      const src = originals[p - 1]!;
+      const grows = this.grows.filter((g) => g.p === p);
+      if (!grows.length) {
+        const pg = addPage();
+        pg.drawPage(await this.doc.embedPage(src), { x: 0, y: 0 });
+        replay(p, [{ top: H, bottom: -1, pg, dy: 0 }], [pg]);
+        return;
+      }
+      const placed: Array<{ top: number; bottom: number; pg: PDFPage; dy: number }> = [];
+      const footers: PDFPage[] = [];
+      const footerBand = await this.doc.embedPage(src, { left: 0, bottom: 0, right: W, top: CONTENT_BOTTOM - 3 });
+      const cuts = [...new Set(grows.map((g) => g.cut))].sort((a, b) => b - a);
+      // Each piece carries the page's whole content (clipped), so the page is cut as few times as possible.
+      const breaks = this.sectionBreaks(p);
+      const bottomY = CONTENT_BOTTOM - 3;
+      let pg = addPage();
+      pg.drawPage(footerBand, { x: 0, y: 0 });
+      footers.push(pg);
+      let cursor = H; // the first band keeps the page top (logo, draft note)
+      const fresh = () => {
+        pg = addPage();
+        pg.drawPage(footerBand, { x: 0, y: 0 });
+        footers.push(pg);
+        cursor = CONTENT_TOP;
+      };
+      let top = H;
+      // Place [top, y] of the page at the cursor, splitting between sections where a page fills up.
+      const place = async (y: number) => {
+        while (top - y > 0.5) {
+          const content = this.contentBelow(p, top, y);
+          if (content === null) break; // only white space left
+          if (cursor === CONTENT_TOP && content < top - 2) top = content + 2; // a new page starts at content, not white space
+          let end = y;
+          if (cursor - (top - y) < bottomY) {
+            const fits = breaks.filter((b) => b < top && b > y && cursor - (top - b) >= bottomY);
+            if (fits.length) end = Math.min(...fits);
+            else if (cursor < CONTENT_TOP) {
+              fresh();
+              continue;
+            } else end = Math.max(y, top - (cursor - bottomY)); // taller than a page: cut where it must
+          }
+          const band = await this.doc.embedPage(src, { left: 0, bottom: end, right: W, top });
+          pg.drawPage(band, { x: 0, y: cursor - (top - end) });
+          placed.push({ top, bottom: end, pg, dy: cursor - top });
+          cursor -= top - end;
+          top = end;
+          if (top > y + 0.5 && this.contentBelow(p, top, y) !== null) fresh();
+        }
+        top = Math.min(top, y);
+      };
+      for (const y of [...cuts, bottomY]) {
+        await place(y);
+        if (cuts.includes(y)) {
+          // The strip continuing every grown box of this row, with the row's column lines.
+          const row = grows.filter((g) => g.cut === y);
+          const cols = this.layout.edges.filter((e) => e.p === p && e.o === "v" && e.b - e.a < 600 && e.a <= y - BORDER - 0.3 && e.b >= y + 0.3).map((e) => e.c);
+          const queue = row.map((g) => ({ g, i: 0 }));
+          const stripTop = cursor;
+          while (queue.some((q) => q.i < q.g.lines.length)) {
+            if (cursor - CONTENT_BOTTOM < 14) {
+              this.hline(pg, cols, cursor);
+              fresh();
+              this.hline(pg, cols, cursor);
+            }
+            const start = cursor;
+            let used = 0;
+            for (const q of queue) {
+              const drop = q.i === 0 && start === stripTop ? q.g.drop : q.g.size * 1.05;
+              const fit = Math.max(1, Math.floor((start - drop - CONTENT_BOTTOM - 3) / q.g.lead) + 1);
+              const take = q.g.lines.slice(q.i, q.i + fit);
+              take.forEach((l, k) => this.draw(pg, q.g.x, start - drop - k * q.g.lead, l, q.g.size, false, q.g.gap));
+              q.i += take.length;
+              if (take.length) used = Math.max(used, drop + (take.length - 1) * q.g.lead + q.g.size * 0.45);
+            }
+            for (const c of cols) pg.drawLine({ start: { x: c, y: start }, end: { x: c, y: start - used }, thickness: LINE, color: BLACK });
+            cursor -= used;
+          }
+        }
+      }
+      replay(p, placed, footers);
+    };
+
+    for (let p = 1; p < insertBefore; p++) await layOut(p);
+
+    // Added pages: answers that still didn't fit, then the graphs.
     let pg: PDFPage | null = null;
     let y = 0;
+    const added: PDFPage[] = [];
     const newPage = () => {
-      pg = this.doc.insertPage(insertBefore - 1 + added.length, [W, H]);
+      pg = addPage();
       added.push(pg);
       y = H - 50;
     };
@@ -380,7 +559,7 @@ export class FormFiller {
       const gap = { open: false };
       for (const l of this.wrap(text, 552, size)) {
         if (!pg || y < 70) newPage();
-        this.draw(this.doc.getPages().indexOf(pg!) + 1, 28, y, l, size, b, gap);
+        this.draw(pg!, 28, y, l, size, b, gap);
         y -= size * 1.3;
       }
       y -= 6;
@@ -394,39 +573,82 @@ export class FormFiller {
     }
     if (figures.length) {
       bar("Graphs");
-      figures.forEach((f, i) => {
-        const img = f.png;
-        const w0 = img.readUInt32BE(16);
-        const h0 = img.readUInt32BE(20);
+      for (const [i, f] of figures.entries()) {
+        const w0 = f.png.readUInt32BE(16);
+        const h0 = f.png.readUInt32BE(20);
         const k = Math.min(540 / w0, 330 / h0);
         const [w, h] = [w0 * k, h0 * k];
         if (!pg || y - h < 110) newPage();
-        figs.push({ page: pg!, x: (W - w) / 2, y: y - h, w, h, png: img });
+        pg!.drawImage(await this.doc.embedPng(f.png), { x: (W - w) / 2, y: y - h, width: w, height: h });
         y -= h + 12;
         para(`Figure ${i + 1}. ${f.title} (source: ${f.source})`, 7.8, true);
         para(f.summary);
-      });
-    }
-    for (const f of figs) {
-      const emb = await this.doc.embedPng(f.png);
-      f.page.drawImage(emb, { x: f.x, y: f.y, width: f.w, height: f.h });
-    }
-    // Footers: the form's own "Page X of 13" is replaced on every page with the new count.
-    const total = this.doc.getPageCount();
-    const footerItems = this.layout.items.filter((i) => /^Page \d+ of \d+$/.test(i.s.trim()));
-    let orig = 0;
-    this.doc.getPages().forEach((page, idx) => {
-      if (!added.includes(page)) {
-        orig++;
-        for (const it of footerItems.filter((i) => i.p === orig)) page.drawRectangle({ x: it.x - 2, y: it.y - 3, width: it.w + 8, height: it.size + 5, color: WHITE });
-      } else {
-        const fw = this.width(footer, 7);
-        page.drawText(footer, { x: W / 2 - fw / 2, y: 42.8, size: 7, font: this.font });
       }
-      const label = `Page ${idx + 1} of ${total}`;
+    }
+    for (const a of added) {
+      const fw = this.width(footer, 7);
+      a.drawText(footer, { x: W / 2 - fw / 2, y: 42.8, size: 7, font: this.font });
+    }
+
+    for (let p = insertBefore; p <= n; p++) await layOut(p);
+    for (let i = 0; i < n; i++) this.doc.removePage(0);
+    out.forEach((page, idx) => {
+      const label = `Page ${idx + 1} of ${out.length}`;
       page.drawText(label, { x: 589 - this.width(label, 9), y: 24, size: 9, font: this.font });
     });
-    return added.length;
+    return out.length - n;
+  }
+
+  /**
+   * The top of the highest thing drawn on page p between y and top: `top` itself when
+   * something crosses it, null when there is only white space.
+   */
+  private contentBelow(p: number, top: number, y: number): number | null {
+    const spans: Array<[number, number]> = [
+      ...this.layout.items.filter((i) => i.p === p && i.s.trim()).map((i): [number, number] => [i.y - i.size * 0.35, i.y + i.size * 1.05]),
+      ...this.layout.edges.filter((e) => e.p === p && !isFrame(e)).map((e): [number, number] => (e.o === "h" ? [e.c - 1, e.c + 1] : [e.a, e.b])),
+      ...this.layout.rects.filter((r) => r.p === p && r.y1 - r.y0 < 600).map((r): [number, number] => [r.y0, r.y1]),
+      ...this.ops.filter((o) => o.p === p).map((o): [number, number] => [o.y - 8, o.y + 8]),
+    ];
+    let best: number | null = null;
+    for (const [lo, hi] of spans) {
+      if (hi <= y || lo >= top) continue;
+      if (hi >= top) return top;
+      best = Math.max(best ?? -Infinity, hi);
+    }
+    return best;
+  }
+
+  /** A horizontal line across a strip's columns (where a strip breaks across pages). */
+  private hline(pg: PDFPage, cols: number[], y: number) {
+    if (cols.length < 2) return;
+    pg.drawLine({ start: { x: Math.min(...cols), y }, end: { x: Math.max(...cols), y }, thickness: LINE, color: BLACK });
+  }
+
+  /**
+   * Where a page can be cut between sections: heights crossed by no table column line,
+   * text or shaded bar (the page frame aside). Cuts sit in the middle of each such gap.
+   */
+  private sectionBreaks(p: number): number[] {
+    const v = this.layout.edges.filter((e) => e.p === p && e.o === "v" && e.b - e.a < 600);
+    const h = this.layout.edges.filter((e) => e.p === p && e.o === "h" && e.b - e.a < 600);
+    const items = this.layout.items.filter((i) => i.p === p);
+    const rects = this.layout.rects.filter((r) => r.p === p && r.y1 - r.y0 < 600);
+    const free = (y: number) =>
+      !v.some((e) => e.a < y && y < e.b) &&
+      !h.some((e) => Math.abs(e.c - y) < 1.5) &&
+      !items.some((i) => i.y - i.size * 0.35 < y && y < i.y + i.size * 1.05) &&
+      !rects.some((r) => r.y0 - 1 < y && y < r.y1 + 1);
+    const out: number[] = [];
+    let runTop: number | null = null;
+    for (let y = CONTENT_TOP - 1; y >= CONTENT_BOTTOM + 1; y--) {
+      if (free(y)) runTop ??= y;
+      else if (runTop !== null) {
+        if (runTop - y >= 3) out.push((runTop + y + 1) / 2);
+        runTop = null;
+      }
+    }
+    return out;
   }
 
   save(): Promise<Uint8Array> {
