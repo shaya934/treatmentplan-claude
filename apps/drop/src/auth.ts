@@ -14,9 +14,10 @@ import QRCode from "qrcode";
 import { audit, cfg, HttpError } from "./config";
 
 /**
- * Sign-in with Amazon Cognito: email + password, then an authenticator-app code
- * (MFA is required on the user pool). First sign-in sets a new password and
- * links the authenticator app. The server never stores passwords.
+ * Sign-in with Amazon Cognito: email + password (the user pool has no MFA, by the
+ * owner's choice). First sign-in replaces the emailed temporary password. If MFA is
+ * turned on again, the authenticator steps below still work. The server never
+ * stores passwords.
  *
  * The browser then holds an HttpOnly session cookie that expires after 15 minutes
  * without activity and after 12 hours at most.
@@ -78,7 +79,8 @@ async function readChallenge(token: string): Promise<Record<string, string>> {
   }
 }
 
-async function next(r: { ChallengeName?: string; Session?: string }, email: string): Promise<Reply> {
+async function next(r: { ChallengeName?: string; Session?: string; AuthenticationResult?: { IdToken?: string } }, email: string, ip: string): Promise<Reply> {
+  if (r.AuthenticationResult?.IdToken) return done(r.AuthenticationResult.IdToken, ip);
   if (r.ChallengeName === ChallengeNameType.NEW_PASSWORD_REQUIRED) {
     return [{ step: "new_password", challenge: await challenge({ kind: "new_password", s: r.Session!, email }) }, {}];
   }
@@ -91,7 +93,7 @@ async function next(r: { ChallengeName?: string; Session?: string }, email: stri
     const uri = `otpauth://totp/${encodeURIComponent(`We Achieve Plans:${email}`)}?secret=${secret}&issuer=${encodeURIComponent("We Achieve Plans")}`;
     return [{ step: "mfa_setup", secret, qr: await QRCode.toDataURL(uri), challenge: await challenge({ kind: "setup", s: assoc.Session!, email }) }, {}];
   }
-  throw new HttpError(401, "An authenticator code is required for every account.");
+  throw new HttpError(401, GENERIC);
 }
 
 async function done(idToken: string, ip: string): Promise<Reply> {
@@ -111,8 +113,7 @@ export async function login(email: string, password: string, ip: string): Promis
   const e = email.trim().toLowerCase();
   try {
     const r = await idp.send(new InitiateAuthCommand({ AuthFlow: AuthFlowType.USER_PASSWORD_AUTH, ClientId: cfg.clientId, AuthParameters: { USERNAME: e, PASSWORD: password } }));
-    if (r.AuthenticationResult?.IdToken) throw new HttpError(401, "An authenticator code is required for every account.");
-    return await next(r, e);
+    return await next(r, e, ip);
   } catch (err) {
     fail(e, ip, err);
   }
@@ -126,7 +127,7 @@ export async function newPassword(token: string, password: string, ip: string): 
     const r = await idp.send(
       new RespondToAuthChallengeCommand({ ClientId: cfg.clientId, ChallengeName: ChallengeNameType.NEW_PASSWORD_REQUIRED, Session: c.s, ChallengeResponses: { USERNAME: c.email!, NEW_PASSWORD: password } }),
     );
-    return await next(r, c.email!);
+    return await next(r, c.email!, ip);
   } catch (err) {
     fail(c.email!, ip, err, "That password could not be set. It needs upper and lower case letters, a number and a symbol.");
   }

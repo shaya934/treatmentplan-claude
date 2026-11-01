@@ -29,7 +29,8 @@ export interface DropProps extends StackProps {
 /**
  * HIPAA-minded setup for the document drop site:
  * - files: S3, encrypted with a customer KMS key, TLS only, no public access, deleted after 1 day
- * - sign-in: Cognito, invite only, authenticator-app MFA required, strong passwords
+ * - sign-in: Cognito, invite only, strong passwords (14+ characters), sign-in attempts rate-limited.
+ *   The owner chose to sign in without an authenticator code (2026-11-01).
  * - app: one Fargate task reachable only through an HTTPS load balancer with WAF
  * - AI: Amazon Bedrock and Textract in this account (covered by the AWS BAA); nothing leaves AWS
  * - audit: app audit events and load balancer / S3 access logs kept for 6 years
@@ -71,13 +72,12 @@ export class DropStack extends Stack {
       selfSignUpEnabled: false,
       signInAliases: { email: true },
       signInCaseSensitive: false,
-      mfa: cognito.Mfa.REQUIRED,
-      mfaSecondFactor: { otp: true, sms: false },
+      mfa: cognito.Mfa.OFF,
       passwordPolicy: { minLength: 14, requireLowercase: true, requireUppercase: true, requireDigits: true, requireSymbols: true, tempPasswordValidity: Duration.days(3) },
       accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
       userInvitation: {
         emailSubject: "Your We Achieve treatment plan sign-in",
-        emailBody: `You can now sign in at ${url}<br><br>Email: {username}<br>Temporary password: {####}<br><br>You will choose your own password and set up an authenticator app the first time you sign in. The temporary password expires in 3 days.`,
+        emailBody: `You can now sign in at ${url}<br><br>Email: {username}<br>Temporary password: {####}<br><br>You will choose your own password the first time you sign in. The temporary password expires in 3 days.`,
       },
       removalPolicy: RemovalPolicy.RETAIN,
     });

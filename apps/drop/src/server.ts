@@ -174,7 +174,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     const pdf = await store.getOutput(user.sub, job);
     if (!pdf) return send(res, 404, { error: "Not ready." });
     audit("form_downloaded", user.email, { jobId: job, ip });
-    const day = new Date().toISOString().slice(0, 10);
+    const day = new Date().toISOString().slice(0, 16).replace("T", " ").replace(":", "-");
     return send(res, 200, pdf, { ...cookie, "content-type": "application/pdf", "content-disposition": `attachment; filename="Treatment plan ${day}.pdf"` });
   }
   if (req.method === "DELETE" && !m[2]) {

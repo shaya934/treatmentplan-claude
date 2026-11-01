@@ -159,6 +159,14 @@ async function poll() {
     if (editing) {
       editing.textContent = s.reply || "Done.";
       editing.classList.remove("wait");
+      if (s.updated) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "inline";
+        b.textContent = "Download updated PDF";
+        b.addEventListener("click", download);
+        editing.append(b);
+      }
       editing = null;
       $("send").disabled = false;
       $("download").disabled = false;
@@ -202,9 +210,10 @@ $("edit").addEventListener("submit", async (e) => {
   }
 });
 
-$("download").addEventListener("click", () => {
+function download() {
   location.href = `/api/jobs/${job}/pdf`;
-});
+}
+$("download").addEventListener("click", download);
 $("again").addEventListener("click", async () => {
   if (!confirm("Delete these documents and the filled form now?")) return;
   await api("DELETE", `/api/jobs/${job}`).catch((err) => error(err.message));

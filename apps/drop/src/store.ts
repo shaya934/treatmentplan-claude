@@ -13,6 +13,8 @@ export interface JobStatus {
   message?: string;
   /** The AI's reply to the BCBA's last edit instruction. */
   reply?: string;
+  /** Whether that instruction changed the form (so there is a new PDF to download). */
+  updated?: boolean;
 }
 
 interface Store {

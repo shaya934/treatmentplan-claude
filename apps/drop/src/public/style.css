@@ -41,3 +41,4 @@ code { word-break: break-all; }
 #log li.me { background: #eef5fc; margin-left: 15%; }
 #log li.ai { background: #fff; border: 1px solid var(--line); margin-right: 15%; }
 #log li.ai.wait { color: var(--muted); }
+#log li .inline { display: block; margin-top: 10px; padding: 8px 14px; font-size: 14px; }

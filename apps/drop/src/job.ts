@@ -31,7 +31,7 @@ export async function runJob(owner: string, email: string, job: string, mode: "f
         await store.putOutput(owner, job, await draftToPdf(draft));
         await store.putJson(owner, job, "draft", toStored(draft));
       }
-      await store.setStatus(owner, job, { state: "done", reply: reply || (changed.length ? `Updated: ${changed.join(", ")}.` : "Nothing was changed.") });
+      await store.setStatus(owner, job, { state: "done", updated: changed.length > 0, reply: reply || (changed.length ? `Updated: ${changed.join(", ")}.` : "Nothing was changed.") });
       audit("form_edited", email, { jobId: job, count: changed.length });
     } catch (e) {
       console.error(JSON.stringify({ event: "edit_failed", jobId: job, errorName: (e as Error).name }));
