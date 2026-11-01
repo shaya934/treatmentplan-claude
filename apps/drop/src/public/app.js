@@ -77,6 +77,8 @@ function startApp() {
   $("drop").hidden = false;
   $("working").hidden = true;
   $("done").hidden = true;
+  $("log").replaceChildren();
+  editing = null;
   refresh();
   show("app");
 }
@@ -147,12 +149,20 @@ $("create").addEventListener("click", async () => {
 });
 
 let pollFailures = 0;
+let editing = null; // the chat bubble waiting for the AI's reply to an edit
 async function poll() {
   try {
     const s = await (await api("GET", `/api/jobs/${job}`)).json();
     pollFailures = 0;
     if (s.state === "working") return setTimeout(poll, 4000);
     $("working").hidden = true;
+    if (editing) {
+      editing.textContent = s.reply || "Done.";
+      editing.classList.remove("wait");
+      editing = null;
+      $("send").disabled = false;
+      $("download").disabled = false;
+    }
     if (s.state === "done") $("done").hidden = false;
     else error(s.message || "Something went wrong. Please start over.");
   } catch (err) {
@@ -162,6 +172,35 @@ async function poll() {
     error(err.message);
   }
 }
+
+function bubble(text, who) {
+  const li = document.createElement("li");
+  li.className = who;
+  li.textContent = text;
+  $("log").append(li);
+  return li;
+}
+
+$("edit").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const box = $("edit").elements.instruction;
+  const instruction = box.value.trim();
+  if (!instruction || editing) return;
+  error("");
+  $("send").disabled = true;
+  try {
+    await api("POST", `/api/jobs/${job}/edit`, { instruction });
+    bubble(instruction, "me");
+    box.value = "";
+    editing = bubble("Making the changes… this takes about a minute.", "ai wait");
+    $("download").disabled = true;
+    pollFailures = 0;
+    setTimeout(poll, 3000);
+  } catch (err) {
+    error(err.message);
+    $("send").disabled = false;
+  }
+});
 
 $("download").addEventListener("click", () => {
   location.href = `/api/jobs/${job}/pdf`;

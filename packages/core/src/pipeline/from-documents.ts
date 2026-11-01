@@ -1,6 +1,6 @@
 import { ai, type AiContext } from "../ai/client";
-import { FORM_FROM_DOCUMENTS_SYSTEM } from "../ai/prompts";
-import { ImportOutput } from "../ai/schemas";
+import { FORM_EDIT_SYSTEM, FORM_FROM_DOCUMENTS_SYSTEM } from "../ai/prompts";
+import { EditOutput, ImportOutput } from "../ai/schemas";
 import { isEmptyValue, type PlanContent } from "../plan/content";
 import type { Figure } from "../pdf-form/engine";
 import { fillWeAchieveForm } from "../pdf-form/we-achieve";
@@ -31,12 +31,60 @@ const MAX_CHARS = 400_000;
 const PARALLEL = 2;
 
 export async function documentsToForm(ctx: AiContext, docs: InputDocument[], today = new Date()): Promise<Buffer> {
-  const { content, figures } = await formContentFromDocuments(ctx, docs, today);
-  return fillWeAchieveForm({ content, firstName: firstName(String(content.client_name?.value ?? "")), draft: true, figures, footer: "We Achieve ABA" });
+  return draftToPdf(await formContentFromDocuments(ctx, docs, today));
+}
+
+/** A filled form before it is typed into the PDF: answers, graphs, and the documents' text (for later edits). */
+export interface FormDraft {
+  content: PlanContent;
+  figures: Figure[];
+  context: string;
+}
+
+export function draftToPdf(d: Pick<FormDraft, "content" | "figures">): Promise<Buffer> {
+  return fillWeAchieveForm({ content: d.content, firstName: firstName(String(d.content.client_name?.value ?? "")), draft: true, figures: d.figures, footer: "We Achieve ABA" });
+}
+
+/**
+ * Apply a BCBA's instruction to a filled form ("add that she attends 2nd grade", "shorten
+ * the goals"): the AI returns new values only for the fields the instruction concerns.
+ * Returns the AI's short reply and the labels of the fields it changed.
+ */
+export async function editFormContent(ctx: AiContext, draft: FormDraft, instruction: string): Promise<{ reply: string; changed: string[] }> {
+  const fields = WE_ACHIEVE_FORM_TEMPLATE.sections.flatMap((s) => s.fields).filter((f) => f.type !== "static" && !f.calc);
+  const current = fields.map((f) => `<field id="${f.id}">${JSON.stringify(draft.content[f.id]?.value ?? null)}</field>`).join("\n");
+  const out = await (await ai()).structured({
+    step: "plan_edit",
+    ctx,
+    system: FORM_EDIT_SYSTEM,
+    cachedContext: `${draft.context}
+
+${lengthGuide(fields)}`,
+    user: `Current form:
+${current}
+
+<instruction>
+${instruction.slice(0, 4000)}
+</instruction>`,
+    toolName: "edit_form",
+    toolDescription: "Return the complete new value of each field you change, and a short reply to the BCBA.",
+    schema: EditOutput,
+    maxTokens: 8000,
+  });
+  const byId = new Map(fields.map((f) => [f.id, f]));
+  const changed: string[] = [];
+  for (const c of out.changes) {
+    const f = byId.get(c.field_id);
+    if (!f) continue; // never write outside the form's fields
+    const value = normalizeValue(f, c.new_value, draft.content[f.id]?.value ?? null);
+    draft.content[f.id] = { value, status: "complete", sources: ["bcba_edit"] };
+    changed.push(f.label);
+  }
+  return { reply: out.message, changed };
 }
 
 /** The form's answers (and graphs) read from the documents, before they are typed into the PDF. */
-export async function formContentFromDocuments(ctx: AiContext, docs: InputDocument[], today = new Date()): Promise<{ content: PlanContent; figures: Figure[] }> {
+export async function formContentFromDocuments(ctx: AiContext, docs: InputDocument[], today = new Date()): Promise<FormDraft> {
   const t = WE_ACHIEVE_FORM_TEMPLATE;
   const parts: string[] = [];
   const figures: Figure[] = [];
@@ -92,7 +140,7 @@ export async function formContentFromDocuments(ctx: AiContext, docs: InputDocume
   const age = isNaN(+dob) ? null : ageOn(dob.toISOString().slice(0, 10), today);
   if (age !== null) content.age = { value: String(age), status: "calculated", sources: [] };
 
-  return { content, figures };
+  return { content, figures, context };
 }
 
 /** "Testcase, Ava" or "Ava Testcase" -> "Ava". */

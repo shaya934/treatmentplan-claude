@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { audit, cfg, HttpError } from "./config";
 import { login, logout, newPassword, mfa, readSession, refreshSession } from "./auth";
-import { store } from "./store";
+import { store, type JobStatus } from "./store";
 
 /**
  * One page: sign in (Cognito, MFA required), drop all of a client's documents,
@@ -61,21 +61,28 @@ const json = async (req: IncomingMessage) => {
 };
 
 /** Fill the form in its own process (job.ts), so building the PDF never stalls the website. */
-function startJob(owner: string, email: string, job: string) {
+function startJob(owner: string, email: string, job: string, mode: "fill" | "edit" = "fill") {
   running.add(job);
   if (!cfg.bucket) {
     // Local development keeps files in memory, which only this process can see.
-    void import("./job").then((m) => m.runJob(owner, email, job)).finally(() => running.delete(job));
+    void import("./job").then((m) => m.runJob(owner, email, job, mode)).finally(() => running.delete(job));
     return;
   }
-  const child = fork(join(import.meta.dirname, "job.ts"), [owner, email, job]);
+  const child = fork(join(import.meta.dirname, "job.ts"), [owner, email, job, mode]);
   child.on("exit", async (code) => {
     running.delete(job);
-    if (code !== 0 && (await store.getStatus(owner, job))?.state === "working") {
-      await store.setStatus(owner, job, { state: "failed", message: "Something went wrong reading the documents. Please try again." });
-      audit("form_failed", email, { jobId: job });
-    }
+    if (code !== 0 && (await store.getStatus(owner, job))?.state === "working") await interrupted(owner, email, job);
   });
+}
+
+/** A job that stopped without finishing: an edit leaves the form as it was; a new form failed. */
+async function interrupted(owner: string, email: string, job: string): Promise<JobStatus> {
+  const s: JobStatus = (await store.getJson(owner, job, "draft"))
+    ? { state: "done", reply: "Sorry, that change could not be made. The form was not changed; please try again." }
+    : { state: "failed", message: "Something went wrong reading the documents. Please try again." };
+  await store.setStatus(owner, job, s);
+  if (s.state === "failed") audit("form_failed", email, { jobId: job });
+  return s;
 }
 
 async function handle(req: IncomingMessage, res: ServerResponse) {
@@ -122,7 +129,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     await store.setStatus(user.sub, job, { state: "new" });
     return send(res, 200, { id: job }, cookie);
   }
-  const m = path.match(/^\/api\/jobs\/([^/]+)(\/files|\/start|\/pdf)?$/);
+  const m = path.match(/^\/api\/jobs\/([^/]+)(\/files|\/start|\/pdf|\/edit)?$/);
   if (!m || !ID.test(m[1]!)) return send(res, 404, { error: "Not found." });
   const job = m[1]!;
   const status = await store.getStatus(user.sub, job); // only the uploader's own jobs exist under their prefix
@@ -147,9 +154,20 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     startJob(user.sub, user.email, job);
     return send(res, 200, { ok: true }, cookie);
   }
+  if (req.method === "POST" && m[2] === "/edit") {
+    if (status.state !== "done" || running.has(job)) throw new HttpError(409, "Wait until the form is finished.");
+    const instruction = String((await json(req)).instruction ?? "").trim();
+    if (!instruction) throw new HttpError(400, "Type what you would like changed.");
+    if (instruction.length > 4000) throw new HttpError(400, "Please keep it under 4,000 characters.");
+    await store.putJson(user.sub, job, "edit", { instruction });
+    await store.setStatus(user.sub, job, { state: "working" });
+    audit("edit_requested", user.email, { jobId: job });
+    startJob(user.sub, user.email, job, "edit");
+    return send(res, 200, { ok: true }, cookie);
+  }
   if (req.method === "GET" && !m[2]) {
     // A job that was working when the server restarted will never finish.
-    if (status.state === "working" && !running.has(job)) return send(res, 200, { state: "failed", message: "The server restarted. Please start over." });
+    if (status.state === "working" && !running.has(job)) return send(res, 200, await interrupted(user.sub, user.email, job));
     return send(res, 200, status, cookie);
   }
   if (req.method === "GET" && m[2] === "/pdf") {

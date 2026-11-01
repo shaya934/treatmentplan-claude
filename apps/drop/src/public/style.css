@@ -33,3 +33,11 @@ code { word-break: break-all; }
 .error { color: var(--warn); text-align: center; margin-top: 16px; }
 @media (max-width: 480px) { button.secondary { margin: 8px 0 0; } }
 [hidden] { display: none !important; }
+.chat { margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--line); }
+.chat h2 { font-size: 17px; margin: 0 0 6px; }
+.chat textarea { display: block; width: 100%; margin: 8px 0 10px; padding: 10px; font: inherit; border: 1px solid var(--line); border-radius: 6px; resize: vertical; }
+#log { list-style: none; padding: 0; margin: 10px 0 0; }
+#log li { padding: 8px 12px; border-radius: 8px; margin-bottom: 8px; font-size: 15px; white-space: pre-wrap; }
+#log li.me { background: #eef5fc; margin-left: 15%; }
+#log li.ai { background: #fff; border: 1px solid var(--line); margin-right: 15%; }
+#log li.ai.wait { color: var(--muted); }

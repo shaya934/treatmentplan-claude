@@ -454,26 +454,30 @@ export class FormFiller {
       }
     };
 
+    // The output page being filled, shared across form pages: once a long answer pushes content
+    // down, the following form pages continue right after it instead of leaving half-empty pages.
+    let pg: PDFPage | null = null;
+    let cursor = 0;
+    let openEnd = false; // the previous form page ended inside a box that continues on the next page
+    let endLine: [number, number] | null = null; // ...or ended with a table line, spanning these x
+    const bottomY = CONTENT_BOTTOM - 3;
+
     const layOut = async (p: number) => {
       const src = originals[p - 1]!;
       const grows = this.grows.filter((g) => g.p === p);
-      if (!grows.length) {
-        const pg = addPage();
-        pg.drawPage(await this.doc.embedPage(src), { x: 0, y: 0 });
-        replay(p, [{ top: H, bottom: -1, pg, dy: 0 }], [pg]);
+      if (!grows.length && !pg) {
+        // Nothing moved so far: the page stays exactly as it is.
+        const whole = addPage();
+        whole.drawPage(await this.doc.embedPage(src), { x: 0, y: 0 });
+        replay(p, [{ top: H, bottom: -1, pg: whole, dy: 0 }], [whole]);
         return;
       }
       const placed: Array<{ top: number; bottom: number; pg: PDFPage; dy: number }> = [];
       const footers: PDFPage[] = [];
-      const footerBand = await this.doc.embedPage(src, { left: 0, bottom: 0, right: W, top: CONTENT_BOTTOM - 3 });
+      const footerBand = await this.doc.embedPage(src, { left: 0, bottom: 0, right: W, top: bottomY });
       const cuts = [...new Set(grows.map((g) => g.cut))].sort((a, b) => b - a);
       // Each piece carries the page's whole content (clipped), so the page is cut as few times as possible.
       const breaks = this.sectionBreaks(p);
-      const bottomY = CONTENT_BOTTOM - 3;
-      let pg = addPage();
-      pg.drawPage(footerBand, { x: 0, y: 0 });
-      footers.push(pg);
-      let cursor = H; // the first band keeps the page top (logo, draft note)
       const fresh = () => {
         pg = addPage();
         pg.drawPage(footerBand, { x: 0, y: 0 });
@@ -481,6 +485,24 @@ export class FormFiller {
         cursor = CONTENT_TOP;
       };
       let top = H;
+      if (!pg) {
+        fresh();
+        cursor = H; // the first piece keeps the page top (logo, draft note)
+      } else {
+        // Continue on the current page after a small gap, from where this page's content starts.
+        // A box that ran over the form's page break joins up seamlessly; otherwise leave a small gap.
+        const first = this.contentBelow(p, CONTENT_TOP, bottomY) ?? bottomY;
+        const startLine = this.hLineNear(p, first - 1);
+        if (openEnd) top = CONTENT_TOP + 1;
+        else if (endLine && startLine && Math.abs(startLine[0] - endLine[0]) < 3 && Math.abs(startLine[1] - endLine[1]) < 3) {
+          // A table split by the form's page break: its two halves meet on one line.
+          top = first - 1;
+          cursor += 1;
+        } else {
+          top = first + 2;
+          cursor -= 10;
+        }
+      }
       // Place [top, y] of the page at the cursor, splitting between sections where a page fills up.
       const place = async (y: number) => {
         while (top - y > 0.5) {
@@ -497,15 +519,19 @@ export class FormFiller {
             } else end = Math.max(y, top - (cursor - bottomY)); // taller than a page: cut where it must
           }
           const band = await this.doc.embedPage(src, { left: 0, bottom: end, right: W, top });
-          pg.drawPage(band, { x: 0, y: cursor - (top - end) });
-          placed.push({ top, bottom: end, pg, dy: cursor - top });
+          pg!.drawPage(band, { x: 0, y: cursor - (top - end) });
+          placed.push({ top, bottom: end, pg: pg!, dy: cursor - top });
           cursor -= top - end;
           top = end;
           if (top > y + 0.5 && this.contentBelow(p, top, y) !== null) fresh();
         }
         top = Math.min(top, y);
       };
-      for (const y of [...cuts, bottomY]) {
+      // The page's white space at the bottom is left out, so the next page can follow straight on.
+      const last = this.contentBottom(p);
+      openEnd = last <= CONTENT_BOTTOM + 3;
+      endLine = this.hLineNear(p, last + 2);
+      for (const y of [...cuts.filter((c) => c > last), last]) {
         await place(y);
         if (cuts.includes(y)) {
           // The strip continuing every grown box of this row, with the row's column lines.
@@ -515,9 +541,9 @@ export class FormFiller {
           const stripTop = cursor;
           while (queue.some((q) => q.i < q.g.lines.length)) {
             if (cursor - CONTENT_BOTTOM < 14) {
-              this.hline(pg, cols, cursor);
+              this.hline(pg!, cols, cursor);
               fresh();
-              this.hline(pg, cols, cursor);
+              this.hline(pg!, cols, cursor);
             }
             const start = cursor;
             let used = 0;
@@ -525,11 +551,11 @@ export class FormFiller {
               const drop = q.i === 0 && start === stripTop ? q.g.drop : q.g.size * 1.05;
               const fit = Math.max(1, Math.floor((start - drop - CONTENT_BOTTOM - 3) / q.g.lead) + 1);
               const take = q.g.lines.slice(q.i, q.i + fit);
-              take.forEach((l, k) => this.draw(pg, q.g.x, start - drop - k * q.g.lead, l, q.g.size, false, q.g.gap));
+              take.forEach((l, k) => this.draw(pg!, q.g.x, start - drop - k * q.g.lead, l, q.g.size, false, q.g.gap));
               q.i += take.length;
               if (take.length) used = Math.max(used, drop + (take.length - 1) * q.g.lead + q.g.size * 0.45);
             }
-            for (const c of cols) pg.drawLine({ start: { x: c, y: start }, end: { x: c, y: start - used }, thickness: LINE, color: BLACK });
+            for (const c of cols) pg!.drawLine({ start: { x: c, y: start }, end: { x: c, y: start - used }, thickness: LINE, color: BLACK });
             cursor -= used;
           }
         }
@@ -538,9 +564,9 @@ export class FormFiller {
     };
 
     for (let p = 1; p < insertBefore; p++) await layOut(p);
+    pg = null; // graphs and the signature page start on new pages
 
     // Added pages: answers that still didn't fit, then the graphs.
-    let pg: PDFPage | null = null;
     let y = 0;
     const added: PDFPage[] = [];
     const newPage = () => {
@@ -604,19 +630,34 @@ export class FormFiller {
    * something crosses it, null when there is only white space.
    */
   private contentBelow(p: number, top: number, y: number): number | null {
-    const spans: Array<[number, number]> = [
-      ...this.layout.items.filter((i) => i.p === p && i.s.trim()).map((i): [number, number] => [i.y - i.size * 0.35, i.y + i.size * 1.05]),
-      ...this.layout.edges.filter((e) => e.p === p && !isFrame(e)).map((e): [number, number] => (e.o === "h" ? [e.c - 1, e.c + 1] : [e.a, e.b])),
-      ...this.layout.rects.filter((r) => r.p === p && r.y1 - r.y0 < 600).map((r): [number, number] => [r.y0, r.y1]),
-      ...this.ops.filter((o) => o.p === p).map((o): [number, number] => [o.y - 8, o.y + 8]),
-    ];
     let best: number | null = null;
-    for (const [lo, hi] of spans) {
+    for (const [lo, hi] of this.spans(p)) {
       if (hi <= y || lo >= top) continue;
       if (hi >= top) return top;
       best = Math.max(best ?? -Infinity, hi);
     }
     return best;
+  }
+
+  /** The x extent of the table line(s) at height y on page p, if any. */
+  private hLineNear(p: number, y: number): [number, number] | null {
+    const hs = this.layout.edges.filter((e) => e.p === p && e.o === "h" && !isFrame(e) && Math.abs(e.c - y) < 1.6);
+    return hs.length ? [Math.min(...hs.map((e) => e.a)), Math.max(...hs.map((e) => e.b))] : null;
+  }
+
+  /** The lowest point of anything drawn in page p's content area. */
+  private contentBottom(p: number): number {
+    return Math.max(CONTENT_BOTTOM - 3, Math.min(...this.spans(p).filter(([, hi]) => hi > CONTENT_BOTTOM - 3).map(([lo]) => lo)) - 1);
+  }
+
+  /** Vertical extent of every text item, table line, shaded bar and recorded drawing on page p. */
+  private spans(p: number): Array<[number, number]> {
+    return [
+      ...this.layout.items.filter((i) => i.p === p && i.s.trim()).map((i): [number, number] => [i.y - i.size * 0.35, i.y + i.size * 1.05]),
+      ...this.layout.edges.filter((e) => e.p === p && !isFrame(e)).map((e): [number, number] => (e.o === "h" ? [e.c - 1, e.c + 1] : [e.a, e.b])),
+      ...this.layout.rects.filter((r) => r.p === p && r.y1 - r.y0 < 600).map((r): [number, number] => [r.y0, r.y1]),
+      ...this.ops.filter((o) => o.p === p).map((o): [number, number] => [o.y - 8, o.y + 8]),
+    ];
   }
 
   /** A horizontal line across a strip's columns (where a strip breaks across pages). */

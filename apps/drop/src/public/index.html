@@ -60,6 +60,13 @@
         <p>Your form is ready. Items the documents didn't cover are highlighted in yellow for you to fill in.</p>
         <button id="download">Download filled PDF</button>
         <button id="again" class="secondary">Start a new plan (deletes these files now)</button>
+        <form id="edit" class="chat">
+          <h2>Ask for changes</h2>
+          <p class="small">Tell the AI what to change or add, for example: "Mom reports she now sleeps through the night; add that to the home section" or "fill in the supervising BCBA: Jane Doe, BCBA". It writes it in clinical language and updates the PDF.</p>
+          <ul id="log"></ul>
+          <textarea name="instruction" rows="3" maxlength="4000" placeholder="What would you like changed?" required></textarea>
+          <button id="send">Make changes</button>
+        </form>
       </div>
       <p class="small note">Documents and the filled form are deleted automatically after 24 hours. You are signed out after 15 minutes without activity.</p>
     </section>

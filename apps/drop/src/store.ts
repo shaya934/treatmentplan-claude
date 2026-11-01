@@ -11,6 +11,8 @@ import { cfg } from "./config";
 export interface JobStatus {
   state: "new" | "working" | "done" | "failed";
   message?: string;
+  /** The AI's reply to the BCBA's last edit instruction. */
+  reply?: string;
 }
 
 interface Store {
@@ -22,6 +24,9 @@ interface Store {
   putOutput(owner: string, job: string, pdf: Buffer): Promise<void>;
   getOutput(owner: string, job: string): Promise<Buffer | null>;
   remove(owner: string, job: string): Promise<void>;
+  /** Small JSON files of a job: the filled form's answers ("draft") and a pending edit instruction ("edit"). */
+  putJson(owner: string, job: string, name: string, value: unknown): Promise<void>;
+  getJson<T>(owner: string, job: string, name: string): Promise<T | null>;
 }
 
 const prefix = (owner: string, job: string) => `jobs/${owner}/${job}/`;
@@ -81,6 +86,13 @@ class S3Store implements Store {
   async getOutput(owner: string, job: string) {
     return (await this.get(prefix(owner, job) + "filled.pdf"))?.bytes ?? null;
   }
+  async putJson(owner: string, job: string, name: string, value: unknown) {
+    await this.put(`${prefix(owner, job)}${name}.json`, Buffer.from(JSON.stringify(value)), "application/json");
+  }
+  async getJson<T>(owner: string, job: string, name: string) {
+    const r = await this.get(`${prefix(owner, job)}${name}.json`);
+    return r ? (JSON.parse(r.bytes.toString("utf8")) as T) : null;
+  }
   async remove(owner: string, job: string) {
     const keys = await this.keys(prefix(owner, job));
     for (let i = 0; i < keys.length; i += 1000) {
@@ -116,6 +128,13 @@ class MemoryStore implements Store {
   }
   async getOutput(owner: string, job: string) {
     return this.files.get(prefix(owner, job) + "filled.pdf")?.bytes ?? null;
+  }
+  async putJson(owner: string, job: string, name: string, value: unknown) {
+    this.files.set(`${prefix(owner, job)}${name}.json`, { bytes: Buffer.from(JSON.stringify(value)), type: "application/json" });
+  }
+  async getJson<T>(owner: string, job: string, name: string) {
+    const f = this.files.get(`${prefix(owner, job)}${name}.json`);
+    return f ? (JSON.parse(f.bytes.toString("utf8")) as T) : null;
   }
   async remove(owner: string, job: string) {
     for (const k of [...this.files.keys()]) if (k.startsWith(prefix(owner, job))) this.files.delete(k);
