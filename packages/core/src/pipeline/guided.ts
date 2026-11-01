@@ -6,9 +6,13 @@ import type { GuidedQuestion, Template } from "../template/schema";
 import { findField, guidedQuestions } from "../template/schema";
 import type { BcbaAnswer, Evidence } from "../types";
 
-/** Guided question chat (spec F4). */
+/**
+ * Guided question chat (spec F4). Deliberately aggressive: a question is only
+ * asked when the files say nothing about it, and answers get no follow-ups.
+ * Gaps surface in the draft as [BCBA to confirm: ...] and in the review list.
+ */
 
-export const MAX_FOLLOW_UPS = 2;
+export const MAX_FOLLOW_UPS = 0;
 
 export type QuestionStatus = "answered_by_files" | "partial" | "open" | "answered" | "skipped";
 
@@ -55,13 +59,14 @@ export function questionViews(t: Template, content: PlanContent, evidence: Evide
       ...knownFromEvidence(fields, evidence),
     ];
     const known = knownParts.length ? knownParts.join(" ") : null;
+    const hints = new Set(fields.flatMap((f) => f?.sourceHints ?? []));
+    const relevantEvidence = evidence.some((e) => !e.deleted && hints.has(e.category));
     let status: QuestionStatus = "open";
     if (qa.length) status = "answered";
     else if (skipped.includes(q.id)) status = "skipped";
-    else if (fromFiles.length === fields.length && fields.every((f) => content[f!.id]?.status !== "carried_forward")) status = "answered_by_files";
-    else if (known) status = "partial";
-    const prompt = status === "partial" && known ? `${known} Anything to add or correct? ${q.text}` : q.text;
-    return { ...q, status, known, prompt, answers: qa };
+    // Anything at all from files, the previous plan or the evidence table is enough to draft from.
+    else if (fromFiles.length || known || relevantEvidence) status = "answered_by_files";
+    return { ...q, status, known, prompt: q.text, answers: qa };
   });
 }
 

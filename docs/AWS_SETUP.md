@@ -1,6 +1,6 @@
 # AWS setup (dev environment)
 
-About 2–3 hours, plus waiting time for Bedrock access and DNS. Do everything in **us-east-1 (N. Virginia)**.
+About 2–3 hours, plus waiting time for Bedrock access and DNS. Deploy to **us-east-2 (Ohio)**: the organization SCP blocks regional workloads in us-east-1 (see DECISIONS.md). Identity Center lives in us-east-1.
 
 ## 1. Create and lock down the AWS account
 1. Sign up at aws.amazon.com with a company email (not a personal one).
@@ -29,7 +29,7 @@ Pick a subdomain for dev (e.g. `dev.yourapp.com`).
 
 Log the CLI in through Identity Center:
 ```bash
-aws configure sso          # use your access portal URL, region us-east-1, profile name: aba
+aws configure sso          # use your access portal URL, region us-east-1 (Identity Center), profile region us-east-2, profile name: aba
 aws sso login --profile aba
 aws sts get-caller-identity --profile aba   # shows your 12-digit account ID
 ```
@@ -51,7 +51,7 @@ Get the code (`git clone <repo>`), then `pnpm install`. Edit `infra/cdk.json` �
 ```bash
 cd infra
 export AWS_PROFILE=aba
-npx cdk bootstrap aws://123456789012/us-east-1   # one time per account
+npx cdk bootstrap aws://123456789012/us-east-2   # one time per account
 cd .. && pnpm cdk:deploy:dev                       # ~30–45 minutes
 ```
 During the deploy:

@@ -6,7 +6,7 @@ import { SESSION_COOKIE, verifySession } from "@aba/core/session";
  * expire after SESSION_IDLE_MINUTES (default 15) without activity; API routes
  * slide the expiry forward on each authenticated request.
  */
-const PUBLIC = [/^\/login/, /^\/api\/auth\/(login|mfa)/, /^\/api\/health/, /^\/api\/local-storage\//, /^\/_next\//, /^\/favicon/];
+const PUBLIC = [/^\/login/, /^\/api\/auth\/(login|mfa|new-password)/, /^\/api\/health/, /^\/api\/local-storage\//, /^\/_next\//, /^\/favicon/];
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;

@@ -104,22 +104,87 @@ describe("Phase 2: upload and extraction", () => {
   });
 });
 
+describe("Reassessment: import last period's plan from a file", () => {
+  it("copies matching fields as carried forward, never names/dates, and the draft keeps them", async () => {
+    const s = svcFor(w, "bcba2");
+    const pid = (await plans.createPlan(s, { clientId: w.clients.noah!, type: "reassessment", periodStart: "2026-11-01", periodEnd: "2027-04-29" })).id;
+    const { makePdf } = await import("../src/fixtures");
+    const pdf = await makePdf({
+      filename: "noah_previous_plan.pdf",
+      title: "Treatment Plan (previous period)",
+      pages: [["Last Name, First Name: Wrong, Name", "Primary Communication Mode: Vocal speech, 2-3 word phrases", "Client's Capabilities / Strengths: Strong visual matching and imitation."]],
+    } as never);
+    const { storage, LocalStorage } = await import("../src/storage");
+    const up = await files.requestUpload(s, pid, "noah_previous_plan.pdf", "application/pdf", pdf.length, "previous_plan");
+    await (storage() as InstanceType<typeof LocalStorage>).put(new URL(up.url).searchParams.get("key")!, pdf);
+    await files.completeUpload(s, pid, up.fileId);
+    await flush();
+
+    const b = await plans.getPlanBundle(s, pid);
+    expect(b.files[0]!.purpose).toBe("previous_plan");
+    expect(b.files[0]!.extraction_status).toBe("done");
+    expect(b.evidence).toHaveLength(0); // a previous plan is copied, not mined for facts
+    const c = b.version.content_json;
+    expect(c.communication_mode).toMatchObject({ value: "Vocal speech, 2-3 word phrases", status: "carried_forward" });
+    expect(c.strengths).toMatchObject({ value: "Strong visual matching and imitation.", status: "carried_forward" });
+    expect(c.client_name!.value).toBe("Sample, Noah"); // from the client record, never the old plan
+    expect(b.review.some((r) => r.kind === "carried_forward" && r.field_id === "strengths")).toBe(true);
+
+    // Questions about copied fields are skipped.
+    const { questions } = await plans.getQuestions(s, pid);
+    expect(questions.find((q) => q.fieldIds.includes("strengths"))!.status).toBe("answered_by_files");
+
+    // Source documents are still rejected as a previous plan if they are not Word/PDF.
+    await expect(files.requestUpload(s, pid, "x.csv", "text/csv", 10, "previous_plan")).rejects.toThrow(/Word/);
+  });
+
+  it("carries the client's identity and fills blanks in the client record, but not period dates", async () => {
+    const s = svcFor(w, "bcba2");
+    const clients = await import("../src/svc/clients");
+    const { id: clientId } = await clients.createClient(s, { name: "Blank, Kid", dob: null, medicaidId: null, payer: null, diagnosis: "F84.0", assignedBcbaId: null });
+    const pid = (await plans.createPlan(s, { clientId, type: "reassessment", periodStart: "2026-11-01", periodEnd: "2027-04-29" })).id;
+    const { makePdf } = await import("../src/fixtures");
+    const pdf = await makePdf({
+      filename: "kid_previous_plan.pdf",
+      title: "Treatment Plan (previous period)",
+      pages: [["Date of Birth: 4/12/2019", "Member ID: SYN555", "Insurance Company: Trillium", "Date of Report: 1/5/2026"]],
+    } as never);
+    const { storage, LocalStorage } = await import("../src/storage");
+    const up = await files.requestUpload(s, pid, "kid_previous_plan.pdf", "application/pdf", pdf.length, "previous_plan");
+    await (storage() as InstanceType<typeof LocalStorage>).put(new URL(up.url).searchParams.get("key")!, pdf);
+    await files.completeUpload(s, pid, up.fileId);
+    await flush();
+
+    const b = await plans.getPlanBundle(s, pid);
+    const c = b.version.content_json;
+    expect(c.dob!.value).toBe("4/12/2019");
+    expect(c.member_id!.value).toBe("SYN555");
+    expect(c.insurance!.value).toBe("Trillium");
+    expect(c.age!.value).toBe("7"); // calculated from the DOB now saved on the client record
+    expect(String(c.report_date?.value ?? "")).not.toBe("1/5/2026"); // period dates are never carried
+    const rec = await clients.getClient(s, clientId);
+    expect(rec.client).toMatchObject({ medicaid_id: "SYN555", payer: "Trillium" });
+    expect(String(rec.client.dob).slice(0, 10)).toBe("2019-04-12");
+  });
+});
+
 describe("Phase 3: guided chat", () => {
-  it("shows what is already known, asks follow-ups for vague answers (max 2), and saves every answer", async () => {
+  it("skips anything the files cover, asks no follow-ups, and saves every answer", async () => {
     const s = svcFor(w, "bcba1");
-    const { questions } = await plans.getQuestions(s, planId);
+    const { questions, current } = await plans.getQuestions(s, planId);
     expect(questions).toHaveLength(29);
     const progress = questions.find((q) => q.id === "q_progress")!;
-    expect(progress.status).toBe("partial");
-    expect(progress.prompt).toMatch(/The Vineland-3 from 3\/2026 shows Communication SS 68/);
+    expect(progress.status).toBe("answered_by_files");
+    expect(progress.known).toMatch(/The Vineland-3 from 3\/2026 shows Communication SS 68/);
+    const open = questions.filter((q) => q.status === "open");
+    expect(open.length).toBeLessThan(questions.length);
+    expect(current).toBe(open[0]?.id ?? null);
 
+    // The BCBA can still add to a covered question; one answer completes it.
     const r1 = await plans.answerQuestion(s, planId, "q_progress", "doing well", "voice");
-    expect(r1.complete).toBe(false);
-    expect(r1.followUp).toBeTruthy();
-    const r2 = await plans.answerQuestion(s, planId, "q_progress", "she is better", "typed");
-    expect(r2.complete).toBe(false);
-    const r3 = await plans.answerQuestion(s, planId, "q_progress", "fine", "typed");
-    expect(r3.complete).toBe(true); // at most 2 follow-ups
+    expect(r1.complete).toBe(true);
+    expect(r1.followUp).toBeNull();
+    expect(r1.next).not.toBe("q_progress");
   });
 
   it("answers all questions and resumes on any device", async () => {
@@ -157,7 +222,8 @@ describe("Phase 4: narrative generation and review", () => {
   it("logs AI usage metadata per call (tokens, model, plan) without prompt text", async () => {
     const r = await db.withCtx({ tenantId: w.tenantA, userId: null, role: "system" }, (t) => t.query("SELECT step, model, input_tokens FROM ai_usage WHERE plan_id = $1", [planId]));
     const steps = new Set(r.rows.map((x) => x.step));
-    expect(steps).toEqual(new Set(["extraction", "guided_chat", "narrative", "review"]));
+    // No guided_chat: answers are accepted without an AI follow-up check (MAX_FOLLOW_UPS = 0).
+    expect(steps).toEqual(new Set(["extraction", "narrative", "review"]));
     expect(r.rows.find((x) => x.step === "narrative")!.model).toMatch(/sonnet/);
     expect(r.rows.find((x) => x.step === "extraction")!.model).toMatch(/haiku/);
   });
@@ -283,5 +349,55 @@ describe("no PHI in logs", () => {
     const { sanitize } = await import("../src/logger");
     const out = sanitize({ event: "x", prompt: "Ava Testcase DOB 04/12/2019", status: "call 704-555-1234 email a@b.co id 123456789" });
     expect(out).toEqual({ event: "x", status: "call [phone] email [email] id [id]" });
+  });
+});
+
+describe("Graphs in uploaded files", () => {
+  it("lists graphs with trend facts, lets the BCBA include one, and deletes graphs with their file", async () => {
+    const s = svcFor(w, "bcba2");
+    const pid = (await plans.createPlan(s, { clientId: w.clients.noah!, type: "initial", periodStart: "2026-11-01", periodEnd: "2027-04-29" })).id;
+    const { makeLearningTreePdf } = await import("../src/fixtures");
+    const fileId = await upload(s, pid, "noah_learning_tree_graphs.pdf", await makeLearningTreePdf());
+    await flush();
+
+    const figures = await import("../src/svc/figures");
+    const list = await figures.listFigures(s, pid);
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({ page: 2, filename: "noah_learning_tree_graphs.pdf", include_in_report: false });
+    expect(list[0]!.url).toBeTruthy();
+    const b = await plans.getPlanBundle(s, pid);
+    expect(b.evidence.some((e) => e.fact_text.startsWith("Graph:") && e.page === 2)).toBe(true);
+    expect(b.files[0]!.extraction_status).toBe("done");
+
+    await figures.setFigureIncluded(s, pid, list[0]!.id, true);
+    const included = await db.withCtx({ tenantId: w.tenantA, userId: null, role: "system" }, (t) => figures.planFigures(t, pid, true));
+    expect(included.map((f) => f.id)).toEqual([list[0]!.id]);
+    await expect(figures.setFigureIncluded(svcFor(w, "qaA"), pid, list[0]!.id, false)).rejects.toThrow();
+
+    const { storage } = await import("../src/storage");
+    const key = included[0]!.s3_key;
+    expect((await storage().get(key)).length).toBeGreaterThan(0);
+    await files.deleteFile(s, pid, fileId);
+    expect(await figures.listFigures(s, pid)).toHaveLength(0);
+    await expect(storage().get(key)).rejects.toThrow();
+  });
+});
+
+describe("Upload boxes", () => {
+  it("graphs uploaded in the Graphs box are included in the report automatically", async () => {
+    const s = svcFor(w, "bcba2");
+    const pid = (await plans.createPlan(s, { clientId: w.clients.noah!, type: "initial", periodStart: "2026-11-01", periodEnd: "2027-04-29" })).id;
+    const { makeLearningTreePdf } = await import("../src/fixtures");
+    const pdf = await makeLearningTreePdf();
+    const { storage, LocalStorage } = await import("../src/storage");
+    const up = await files.requestUpload(s, pid, "noah_graphs.pdf", "application/pdf", pdf.length, "graphs");
+    await (storage() as InstanceType<typeof LocalStorage>).put(new URL(up.url).searchParams.get("key")!, pdf);
+    await files.completeUpload(s, pid, up.fileId);
+    await flush();
+    const b = await plans.getPlanBundle(s, pid);
+    expect(b.files[0]!.purpose).toBe("graphs");
+    const figs = await (await import("../src/svc/figures")).listFigures(s, pid);
+    expect(figs.length).toBeGreaterThan(0);
+    expect(figs.every((f) => f.include_in_report)).toBe(true);
   });
 });

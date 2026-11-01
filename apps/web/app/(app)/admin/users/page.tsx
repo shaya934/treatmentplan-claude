@@ -15,6 +15,31 @@ interface U {
 }
 const ROLES = ["company_admin", "clinical_director", "bcba", "read_only"];
 
+/** A company admin with a BCBA credential can also start, edit and finalize plans (rbac.ts). */
+function CredentialCell({ user, onSaved }: { user: U; onSaved: () => Promise<unknown> }) {
+  const [v, setV] = useState(user.credential ?? "");
+  const [status, setStatus] = useState("");
+  const dirty = v.trim() !== (user.credential ?? "");
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setStatus("Saving…");
+    try {
+      await call(`/api/admin/users/${user.id}`, { method: "PATCH", body: { credential: v.trim() } });
+      await onSaved();
+      setStatus("Saved ✓");
+    } catch (err) {
+      setStatus((err as Error).message);
+    }
+  }
+  return (
+    <form onSubmit={save} className="flex items-center gap-1">
+      <input className="input w-24 py-1" value={v} placeholder="e.g. BCBA" onChange={(e) => (setV(e.target.value), setStatus(""))} />
+      {dirty && <button className="btn btn-sm">Save</button>}
+      {status && <span className={`text-xs ${status.startsWith("Saved") || status.startsWith("Saving") ? "text-slate-500" : "text-red-600"}`}>{status}</span>}
+    </form>
+  );
+}
+
 export default function Users() {
   const me = useMe();
   const [users, setUsers] = useState<U[]>([]);
@@ -65,7 +90,9 @@ export default function Users() {
                     ))}
                   </select>
                 </td>
-                <td>{u.credential}</td>
+                <td>
+                  <CredentialCell user={u} onSaved={load} />
+                </td>
                 <td>{u.npi}</td>
                 <td>{u.mfa ? "✓" : "pending"}</td>
                 <td>

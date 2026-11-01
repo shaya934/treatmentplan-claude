@@ -2,7 +2,8 @@
 export interface EnvConfig {
   name: "dev" | "prod";
   account?: string;
-  region: "us-east-1";
+  /** us-east-2: the organization's SCP blocks regional workloads (EC2, RDS, ECS, S3) in us-east-1. */
+  region: "us-east-2";
   domainName: string;
   hostedZoneId?: string;
   hostedZoneName?: string;
@@ -24,9 +25,9 @@ export function envConfig(name: string, ctx: (k: string) => unknown): EnvConfig 
   const o = (ctx(`aba:${name}`) ?? {}) as Partial<EnvConfig>;
   const base: EnvConfig =
     name === "prod"
-      ? { name: "prod", region: "us-east-1", domainName: "app.REPLACE-ME.example", multiAz: true, natGateways: 2, dbInstanceClass: "t4g.medium", webDesiredCount: 2, workerDesiredCount: 2, retainData: true, alarmEmail: "REPLACE-ME@example.com", ownerEmail: "REPLACE-ME@example.com", monthlyBudgetUsd: 1500, enableAccountSecurityServices: true }
-      : { name: "dev", region: "us-east-1", domainName: "dev.REPLACE-ME.example", multiAz: false, natGateways: 1, dbInstanceClass: "t4g.small", webDesiredCount: 1, workerDesiredCount: 1, retainData: false, alarmEmail: "REPLACE-ME@example.com", ownerEmail: "REPLACE-ME@example.com", monthlyBudgetUsd: 300, enableAccountSecurityServices: true };
+      ? { name: "prod", region: "us-east-2", domainName: "app.REPLACE-ME.example", multiAz: true, natGateways: 2, dbInstanceClass: "t4g.medium", webDesiredCount: 2, workerDesiredCount: 2, retainData: true, alarmEmail: "REPLACE-ME@example.com", ownerEmail: "REPLACE-ME@example.com", monthlyBudgetUsd: 1500, enableAccountSecurityServices: true }
+      : { name: "dev", region: "us-east-2", domainName: "dev.REPLACE-ME.example", multiAz: false, natGateways: 1, dbInstanceClass: "t4g.small", webDesiredCount: 1, workerDesiredCount: 1, retainData: false, alarmEmail: "REPLACE-ME@example.com", ownerEmail: "REPLACE-ME@example.com", monthlyBudgetUsd: 300, enableAccountSecurityServices: true };
   if (name !== "dev" && name !== "prod") throw new Error(`Unknown env ${name}`);
   const clean = Object.fromEntries(Object.entries(o).filter(([, v]) => v !== "" && !(typeof v === "string" && v.startsWith("REPLACE-WITH"))));
-  return { ...base, ...clean, name: base.name, region: "us-east-1" };
+  return { ...base, ...clean, name: base.name, region: "us-east-2" };
 }

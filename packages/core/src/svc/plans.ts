@@ -182,7 +182,7 @@ export interface PlanBundle {
   evidence: Evidence[];
   answers: BcbaAnswer[];
   review: ReviewRow[];
-  files: Array<{ id: string; filename: string; mime: string; pages: number | null; extraction_status: string; uploaded_at: string; size_bytes: number }>;
+  files: Array<{ id: string; filename: string; mime: string; pages: number | null; extraction_status: string; uploaded_at: string; size_bytes: number; purpose: "source" | "previous_plan" | "assessment" | "graphs" | "other" }>;
   vars: Record<string, string>;
   permissions: { edit: boolean; finalize: boolean; export: boolean; reopen: boolean };
 }
@@ -199,7 +199,7 @@ export async function getPlanBundle(s: Svc, planId: string): Promise<PlanBundle>
     const evidence = s.p.role === "read_only" ? [] : await getEvidence(t, planId);
     const answers = s.p.role === "read_only" ? [] : await getAnswers(t, planId);
     const review = await many<ReviewRow>(t, "SELECT id, field_id, kind, detail, resolved_by, resolved_at FROM review_items WHERE plan_id = $1 ORDER BY resolved_at NULLS FIRST, created_at", [planId]);
-    const files = s.p.role === "read_only" ? [] : await many<PlanBundle["files"][number]>(t, "SELECT id, filename, mime, pages, extraction_status, uploaded_at, size_bytes FROM files WHERE plan_id = $1 ORDER BY uploaded_at", [planId]);
+    const files = s.p.role === "read_only" ? [] : await many<PlanBundle["files"][number]>(t, "SELECT id, filename, mime, pages, extraction_status, uploaded_at, size_bytes, purpose FROM files WHERE plan_id = $1 ORDER BY uploaded_at", [planId]);
     await log(t, s, "view", "plan", planId);
     const { displayName, firstName } = await import("../types");
     const content = version.content_json;

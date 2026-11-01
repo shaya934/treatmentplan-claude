@@ -88,3 +88,72 @@ describe("admin template chatbot", () => {
     expect(draft!.sections[0]!.fields[0]!.label).toBe("Family structure");
   });
 });
+
+describe("platform standard template", () => {
+  const docx = async (lines: string[]) => {
+    const { Document, Packer, Paragraph } = await import("docx");
+    return Packer.toBuffer(new Document({ sections: [{ children: lines.map((t) => new Paragraph(t)) }] }));
+  };
+
+  it("new companies start from the published standard; existing companies keep their own template", async () => {
+    const pt = await import("../src/svc/platform-template");
+    const admin = await import("../src/svc/admin");
+    const owner = svcFor(w, "owner");
+    expect((await pt.getPlatformTemplate(owner)).builtIn).toBe(true);
+    const before = await tmpl.getCurrentTemplate(svcFor(w, "adminA"));
+
+    const { draft } = await pt.convertPlatformTemplate(owner, await docx(["Intake Summary", "Reason for referral:", "Parent concerns:", "Goals Overview", "Primary goal:"]));
+    expect(draft.sections.map((s) => s.title)).toEqual(["Intake Summary", "Goals Overview"]);
+    await expect(pt.publishPlatformTemplate(owner, { template: draft, changeReason: " " })).rejects.toThrow(/Describe/);
+    const { version } = await pt.publishPlatformTemplate(owner, { template: draft, changeReason: "Our standard form" });
+    expect(version).toBe(1);
+
+    const { id } = await admin.createTenant(owner, { name: "New Co", slug: "new-co", adminEmail: "newco@test.test", adminName: "New Admin", tempPassword: "New-Co-Passw0rd!" });
+    const fresh = await db.withCtx({ tenantId: id, userId: null, role: "system" }, (t) => t.query("SELECT tv.schema_json FROM templates tt JOIN template_versions tv ON tv.id = tt.current_version_id"));
+    const seeded = fresh.rows[0].schema_json;
+    expect(seeded.sections.map((s: { title: string }) => s.title)).toEqual(["Intake Summary", "Goals Overview"]);
+    expect(seeded.branding.companyName).toBe("New Co");
+
+    const after = await tmpl.getCurrentTemplate(svcFor(w, "adminA"));
+    expect(JSON.stringify(after)).toBe(JSON.stringify(before)); // existing company untouched
+
+    expect((await pt.publishPlatformTemplate(owner, { builtIn: true, changeReason: "Back to built-in" })).version).toBe(2);
+    expect((await pt.getPlatformTemplate(owner)).template.sections.length).toBeGreaterThan(5);
+  });
+
+  it("only the platform owner can see or change the standard, even with raw SQL", async () => {
+    const pt = await import("../src/svc/platform-template");
+    await expect(pt.getPlatformTemplate(svcFor(w, "adminA"))).rejects.toThrow();
+    await expect(pt.publishPlatformTemplate(svcFor(w, "adminA"), { builtIn: true, changeReason: "x" })).rejects.toThrow();
+    const rows = await db.withCtx({ tenantId: w.tenantA, userId: w.users.adminA!.id, role: "company_admin" }, (t) => t.query("SELECT count(*)::int AS n FROM platform_templates"));
+    expect(rows.rows[0].n).toBe(0);
+  });
+
+  it("splits a Word template at the listed headings, or reports that it can't", async () => {
+    const { splitAtHeadings } = await import("../src/pipeline/template-chat");
+    const text = "Cover note\nFamily History\nFamily structure:\nSchool Information\nSchool name:";
+    const parts = splitAtHeadings(text, [
+      { title: "Family History", heading: "family  history" },
+      { title: "School", heading: "School Information" },
+    ])!;
+    expect(parts.map((p) => p.title)).toEqual(["Family History", "School"]);
+    expect(parts[0]!.text).toContain("Cover note"); // text before the first heading stays with it
+    expect(parts[1]!.text).toBe("School Information\nSchool name:");
+    expect(splitAtHeadings(text, [{ title: "Missing", heading: "Medical History" }])).toBeNull();
+  });
+});
+
+describe("applying the standard to an existing company", () => {
+  it("adds a new template version with the form, keeps the company's name, and logs it", async () => {
+    const pt = await import("../src/svc/platform-template");
+    const owner = svcFor(w, "owner");
+    await pt.publishPlatformTemplate(owner, { builtIn: true, changeReason: "Use the form" });
+    const before = await tmpl.getCurrentTemplate(svcFor(w, "adminB"));
+    const { version } = await pt.applyStandardToTenant(owner, w.tenantB);
+    const after = await tmpl.getCurrentTemplate(svcFor(w, "adminB"));
+    expect(version).toBeGreaterThan(1);
+    expect(JSON.stringify(after)).toContain("Client Input and Assent");
+    expect(JSON.stringify(after)).toContain(JSON.stringify(before).match(/"companyName":"[^"]*"/)![0]);
+    await expect(pt.applyStandardToTenant(svcFor(w, "adminB"), w.tenantB)).rejects.toThrow();
+  });
+});

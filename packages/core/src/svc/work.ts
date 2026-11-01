@@ -1,11 +1,16 @@
+import { randomUUID } from "node:crypto";
 import { many, one, type Tx } from "../db";
-import { exportKey, storage } from "../storage";
+import { exportKey, figureKey, storage } from "../storage";
 import { docxToPdf, renderDocx } from "../export";
 import { enqueue, type JobMessage } from "../jobs";
 import { log as plog, SafeError } from "../logger";
 import { assertCan } from "../rbac";
 import { extractFacts } from "../pipeline/extract";
 import { generatePlan } from "../pipeline/generate";
+import { graphPageImages, readGraphs, type FoundGraph } from "../pipeline/graphs";
+import { fillWeAchieveForm } from "../pdf-form/we-achieve";
+import { applyImport, importPreviousPlan, toIsoDate } from "../pipeline/import-plan";
+import { deleteFigures, deleteObjects, planFigures } from "./figures";
 import { fileToPages } from "../pipeline/text";
 import { displayName, firstName } from "../types";
 import { log, sysTx, tx, type Svc } from "./context";
@@ -52,7 +57,7 @@ export async function runJob(m: JobMessage): Promise<void> {
 
 async function runExtract(tenantId: string, planId: string, fileId: string, userId: string | null) {
   const file = await sysTx(tenantId, userId, async (t) => {
-    const f = await one<{ s3_key: string; mime: string; filename: string; plan_id: string }>(t, "SELECT s3_key, mime, filename, plan_id FROM files WHERE id = $1", [fileId]);
+    const f = await one<{ s3_key: string; mime: string; filename: string; plan_id: string; purpose: string }>(t, "SELECT s3_key, mime, filename, plan_id, purpose FROM files WHERE id = $1", [fileId]);
     if (!f) throw new Error("file missing");
     await t.query("UPDATE files SET extraction_status = 'processing' WHERE id = $1", [fileId]);
     return f;
@@ -60,13 +65,47 @@ async function runExtract(tenantId: string, planId: string, fileId: string, user
   const plan = await sysTx(tenantId, userId, (t) => getPlanRow(t, planId));
   const bytes = await storage().get(file.s3_key);
   const pages = await fileToPages(bytes, file.mime, file.s3_key);
-  const facts = await extractFacts({ tenantId, planId, complexCase: plan.complex_case }, file.filename, pages);
+  if (file.purpose === "previous_plan") return runImport(tenantId, planId, fileId, file.filename, pages, plan.complex_case, userId);
+  const ctx = { tenantId, planId, complexCase: plan.complex_case };
+  const facts = await extractFacts(ctx, file.filename, pages);
   const needsOcr = pages.filter((p) => p.needsOcr).map((p) => p.page);
-  await sysTx(tenantId, userId, async (t) => {
+
+  // Graphs: a failure here must not lose the text facts, so it only adds a review item.
+  let graphs: FoundGraph[] = [];
+  let graphsFailed = false;
+  try {
+    graphs = await readGraphs(ctx, file.filename, await graphPageImages(bytes, file.mime));
+  } catch (e) {
+    graphsFailed = true;
+    plog.warn({ event: "graph_reading_failed", fileId, error: e instanceof Error ? e.name : "unknown" });
+  }
+  const figures = graphs.map((g) => ({ ...g, id: randomUUID() }));
+  for (const g of figures) await storage().put(figureKey(tenantId, plan.client_id, g.id), g.png, "image/png");
+
+  const oldFigureKeys = await sysTx(tenantId, userId, async (t) => {
     // Lock the plan before any write that takes a FK key-share lock on it, so concurrent jobs serialize cleanly.
     await t.query("SELECT 1 FROM plans WHERE id = $1 FOR UPDATE", [planId]);
     await t.query("DELETE FROM evidence WHERE file_id = $1 AND NOT edited_by_bcba", [fileId]);
-    for (const f of facts) {
+    const oldKeys = await deleteFigures(t, "file_id", fileId);
+    for (const g of figures) {
+      await t.query("INSERT INTO figures (id, tenant_id, plan_id, file_id, page, s3_key, title, summary, include_in_report) VALUES ($1, app_tenant(), $2, $3, $4, $5, $6, $7, $8)", [
+        g.id,
+        planId,
+        fileId,
+        g.page,
+        figureKey(tenantId, plan.client_id, g.id),
+        g.title.slice(0, 300),
+        g.summary.slice(0, 2000),
+        file.purpose === "graphs", // graphs from the Graphs box go into the report unless the BCBA unticks them
+      ]);
+    }
+    if (graphsFailed) {
+      await t.query("INSERT INTO review_items (tenant_id, plan_id, field_id, kind, detail) VALUES (app_tenant(),$1,NULL,'needs_ocr',$2)", [
+        planId,
+        `${file.filename}: graphs could not be read automatically. Review them and add any trends by hand.`,
+      ]);
+    }
+    for (const f of [...facts, ...graphs.flatMap((g) => g.facts)]) {
       await t.query("INSERT INTO evidence (tenant_id, plan_id, file_id, page, fact_text, category, value, unit, source_date) VALUES (app_tenant(),$1,$2,$3,$4,$5,$6,$7,$8)", [
         planId,
         fileId,
@@ -86,6 +125,51 @@ async function runExtract(tenantId: string, planId: string, fileId: string, user
       ]);
     }
     await runPrefill(null, planId, t, userId);
+    return oldKeys;
+  });
+  await deleteObjects(oldFigureKeys);
+}
+
+/** Copy last period's plan (uploaded as Word/PDF) into this plan as carried-forward content. */
+async function runImport(tenantId: string, planId: string, fileId: string, filename: string, pages: Awaited<ReturnType<typeof fileToPages>>, complexCase: boolean, userId: string | null) {
+  const input = await sysTx(tenantId, userId, async (t) => {
+    const plan = await getPlanRow(t, planId);
+    const { template } = await loadTemplateVersion(t, plan.template_version_id);
+    return { template, current: (await latestVersion(t, planId)).content_json };
+  });
+  const updates = await importPreviousPlan({ tenantId, planId, complexCase }, input.template, filename, pages, input.current);
+  await sysTx(tenantId, userId, async (t) => {
+    // Re-read inside the lock and apply only the imported fields, so edits made meanwhile are kept.
+    await t.query("SELECT 1 FROM plans WHERE id = $1 FOR UPDATE", [planId]);
+    const latest = (await latestVersion(t, planId)).content_json;
+    const { content, filled } = applyImport(input.template, latest, updates);
+    const s: Svc = { p: { userId: userId ?? "", tenantId, role: "bcba" }, meta: {} };
+    if (filled.length) await saveVersion(t, s, planId, content, `Copied ${filled.length} fields from the previous plan (${filename})`);
+    for (const fid of filled) {
+      await t.query("INSERT INTO review_items (tenant_id, plan_id, field_id, kind, detail) VALUES (app_tenant(),$1,$2,'carried_forward',$3)", [planId, fid, "Carried forward from the previous plan - confirm"]);
+    }
+    // Fill blanks in the client record (never overwrite), then re-run pre-fill so age etc. follow.
+    const val = (id: string) => (filled.includes(id) && typeof content[id]?.value === "string" ? String(content[id]!.value).trim() || null : null);
+    const dob = val("dob") ? toIsoDate(val("dob")!) : null;
+    const plan = await getPlanRow(t, planId);
+    const r = await t.query(
+      `UPDATE clients SET dob = coalesce(dob, $2::date), medicaid_id = coalesce(nullif(medicaid_id, ''), $3), payer = coalesce(nullif(payer, ''), $4), gender = coalesce(nullif(gender, ''), $5)
+        WHERE id = $1 AND ((dob IS NULL AND $2::date IS NOT NULL) OR (nullif(medicaid_id, '') IS NULL AND $3::text IS NOT NULL)
+          OR (nullif(payer, '') IS NULL AND $4::text IS NOT NULL) OR (nullif(gender, '') IS NULL AND $5::text IS NOT NULL))`,
+      [plan.client_id, dob, val("member_id"), val("insurance"), val("gender")],
+    );
+    if (r.rowCount) {
+      await log(t, s, "update", "client", plan.client_id, { from: "previous_plan" });
+      await runPrefill(null, planId, t, userId);
+    }
+    const pageCount = pages.length;
+    await t.query("UPDATE files SET extraction_status = 'done', pages = $2 WHERE id = $1", [fileId, pageCount]);
+    if (!filled.length) {
+      await t.query("INSERT INTO review_items (tenant_id, plan_id, field_id, kind, detail) VALUES (app_tenant(),$1,NULL,'needs_ocr',$2)", [
+        planId,
+        `${filename}: no plan content could be matched to this template. Check it is last period's plan, or copy content in by hand.`,
+      ]);
+    }
   });
 }
 
@@ -160,8 +244,11 @@ async function runExport(tenantId: string, planId: string, format: "docx" | "pdf
     const client = await getClientRow(t, plan.client_id);
     const v = await latestVersion(t, planId);
     const tmpl = await one<{ docx_s3_key: string | null }>(t, "SELECT docx_s3_key FROM templates WHERE id = $1", [tv.template_id]);
-    return { plan, template: tv.template, client, version: v, wordKey: tmpl?.docx_s3_key ?? null };
+    return { plan, template: tv.template, client, version: v, wordKey: tmpl?.docx_s3_key ?? null, figures: await planFigures(t, planId, true) };
   });
+  const figures = await Promise.all(
+    data.figures.map(async (f) => ({ png: await storage().get(f.s3_key), title: f.title, source: `${f.filename ?? "uploaded file"}, page ${f.page}`, summary: f.summary })),
+  );
   const wordTemplate = data.wordKey ? await storage().get(data.wordKey) : null;
   const logo = data.template.branding.logoS3Key ? await storage().get(data.template.branding.logoS3Key).catch(() => null) : null;
   const content = data.version.content_json;
@@ -173,8 +260,16 @@ async function runExport(tenantId: string, planId: string, format: "docx" | "pdf
     diagnosis: String(content.diagnosis?.value ?? ""),
     company: data.template.branding.companyName,
   };
-  const docx = await renderDocx({ template: data.template, content, vars, wordTemplate, logo, finalDate: data.plan.final_date, draft: data.plan.status !== "final" });
-  const bytes = format === "pdf" ? await docxToPdf(docx) : docx;
+  const draft = data.plan.status !== "final";
+  // The company's own PDF form is filled directly (templates applied before pdfForm existed are recognized by name).
+  const pdfForm = data.template.branding.pdfForm ?? (data.template.name === "We Achieve ABA - Treatment Plan" ? "we-achieve" : undefined);
+  let bytes: Buffer;
+  if (format === "pdf" && pdfForm === "we-achieve") {
+    bytes = await fillWeAchieveForm({ content, firstName: vars.first_name, draft, figures, footer: data.template.branding.footer });
+  } else {
+    const docx = await renderDocx({ template: data.template, content, vars, wordTemplate, logo, finalDate: data.plan.final_date, draft, planType: data.plan.type, figures });
+    bytes = format === "pdf" ? await docxToPdf(docx) : docx;
+  }
   const key = exportKey(tenantId, planId, data.version.version, format);
   await storage().put(key, bytes, format === "pdf" ? "application/pdf" : "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
   await sysTx(tenantId, userId, (t) => t.query("UPDATE jobs SET payload = payload || $2::jsonb WHERE id = $1", [jobId, JSON.stringify({ s3Key: key, version: String(data.version.version) })]));

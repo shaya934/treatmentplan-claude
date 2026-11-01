@@ -15,7 +15,7 @@ const securityHeaders = [
 
 const config: NextConfig = {
   transpilePackages: ["@aba/core", "@aba/config"],
-  serverExternalPackages: ["pg", "unpdf", "exceljs", "mammoth", "docx", "docxtemplater", "pizzip", "bcryptjs"],
+  serverExternalPackages: ["pg", "unpdf", "@napi-rs/canvas", "exceljs", "mammoth", "docx", "docxtemplater", "pizzip", "bcryptjs"],
   poweredByHeader: false,
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];

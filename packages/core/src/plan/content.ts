@@ -26,6 +26,11 @@ export function placeholder(what: string): string {
   return `[BCBA to confirm: ${what}]`;
 }
 
+/** Dates are shown as M/D/YYYY everywhere; ISO dates ("2026-09-24", also inside ranges) are converted. */
+export function usDates(s: string): string {
+  return s.replace(/\b(\d{4})-(\d{2})-(\d{2})\b/g, (_, y: string, m: string, d: string) => `${Number(m)}/${Number(d)}/${y}`);
+}
+
 export function valueToText(v: FieldValue): string {
   if (v === null || v === undefined) return "";
   if (Array.isArray(v)) {

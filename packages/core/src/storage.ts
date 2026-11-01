@@ -35,6 +35,9 @@ export interface Storage {
 export function fileKey(tenantId: string, clientId: string, fileId: string, ext: string) {
   return `tenants/${tenantId}/clients/${clientId}/files/${fileId}.${ext}`;
 }
+export function figureKey(tenantId: string, clientId: string, figureId: string) {
+  return `tenants/${tenantId}/clients/${clientId}/figures/${figureId}.png`;
+}
 export function exportKey(tenantId: string, planId: string, version: number, ext: string) {
   return `tenants/${tenantId}/exports/${planId}/v${version}.${ext}`;
 }

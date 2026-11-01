@@ -94,6 +94,19 @@ describe("role permissions", () => {
     await clients.reassignClient(svcFor(w, "directorA"), r.id, w.users.bcba1!.id);
   });
 
+  it("a company admin who sets a BCBA credential can be assigned clients and start plans", async () => {
+    const { can } = await import("../src/rbac");
+    const ids = async () => (await clients.listBcbas(svcFor(w, "adminA"))).map((b) => b.id);
+    expect(await ids()).not.toContain(w.users.adminA!.id);
+    expect(can({ ...svcFor(w, "adminA").p, credential: null } as never, "plan.create")).toBe(false);
+    await admin.updateUser(svcFor(w, "adminA"), w.users.adminA!.id, { credential: "BCBA" });
+    expect(await ids()).toContain(w.users.adminA!.id);
+    expect(await ids()).toEqual(expect.arrayContaining([w.users.directorA!.id, w.users.bcba1!.id]));
+    expect(can({ ...svcFor(w, "adminA").p, credential: "BCBA" } as never, "plan.create")).toBe(true);
+    await admin.updateUser(svcFor(w, "adminA"), w.users.adminA!.id, { credential: "" });
+    expect(await ids()).not.toContain(w.users.adminA!.id);
+  });
+
   it("read-only users see finalized plans only and cannot edit", async () => {
     const { id } = await plans.createPlan(svcFor(w, "bcba1"), { clientId: w.clients.ava!, type: "initial", periodStart: "2026-11-01", periodEnd: "2027-01-29" });
     await expect(plans.getPlanBundle(svcFor(w, "qaA"), id)).rejects.toThrow(/not found/i);

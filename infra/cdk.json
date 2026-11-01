@@ -2,12 +2,12 @@
   "app": "npx tsx bin/app.ts",
   "context": {
     "aba:dev": {
-      "account": "REPLACE-WITH-12-DIGIT-ACCOUNT-ID",
-      "domainName": "dev.REPLACE-ME.example",
-      "hostedZoneId": "",
-      "hostedZoneName": "",
-      "alarmEmail": "REPLACE-ME@example.com",
-      "ownerEmail": "REPLACE-ME@example.com"
+      "account": "324404179405",
+      "domainName": "dev.abatreatmentplans.com",
+      "hostedZoneId": "Z09159851E73OBEY1WM92",
+      "hostedZoneName": "abatreatmentplans.com",
+      "alarmEmail": "shaya934@gmail.com",
+      "ownerEmail": "shaya934@gmail.com"
     },
     "aba:prod": {
       "account": "REPLACE-WITH-12-DIGIT-ACCOUNT-ID",

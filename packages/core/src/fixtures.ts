@@ -168,3 +168,43 @@ export const SAMPLE_ANSWERS: Record<string, string> = {
   q_caregiver: "Mom attends weekly parent training and implements first-then and token board at home with growing consistency; barrier is the evening work schedule.",
   q_hours: "I recommend 25 hrs/week of 97153 but we are requesting 20 hrs/week of 97153 due to the school schedule, plus 3 hrs/week of 97155 and 1 hrs/week of 97156.",
 };
+
+/**
+ * A fake CentralReach-style learning tree: a text page, then a page with two
+ * program line graphs (axes, gridlines, phase line, data path), so graph
+ * reading, cropping and report export can be exercised end to end.
+ */
+export async function makeLearningTreePdf(): Promise<Buffer> {
+  const doc = await PDFDocument.create();
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  const text = doc.addPage([612, 792]);
+  text.drawText("Learning Tree - Testcase, Ava (SYNTHETIC)", { x: 60, y: 720, size: 14, font: bold });
+  ["Domain: Communication", "  Program: Mands for preferred items - In progress", "  Program: Tacting common objects - Mastered 03/28/2026", "Domain: Social", "  Program: Responding to name - In progress"].forEach((l, i) =>
+    text.drawText(l, { x: 60, y: 690 - i * 18, size: 11, font }),
+  );
+  const page = doc.addPage([612, 792]);
+  page.drawText("Program graphs (SYNTHETIC)", { x: 60, y: 740, size: 14, font: bold });
+  const graph = (title: string, top: number, data: number[]) => {
+    const [x0, y0, w, h] = [80, top - 260, 460, 220];
+    page.drawText(title, { x: x0, y: top - 20, size: 11, font: bold });
+    page.drawLine({ start: { x: x0, y: y0 }, end: { x: x0 + w, y: y0 }, thickness: 1, color: rgb(0, 0, 0) });
+    page.drawLine({ start: { x: x0, y: y0 }, end: { x: x0, y: y0 + h }, thickness: 1, color: rgb(0, 0, 0) });
+    for (let g = 1; g <= 4; g++) {
+      page.drawLine({ start: { x: x0, y: y0 + (h * g) / 4 }, end: { x: x0 + w, y: y0 + (h * g) / 4 }, thickness: 0.3, color: rgb(0.8, 0.8, 0.8) });
+      page.drawText(`${g * 25}%`, { x: x0 - 30, y: y0 + (h * g) / 4 - 3, size: 7, font });
+    }
+    page.drawLine({ start: { x: x0, y: y0 + h * 0.8 }, end: { x: x0 + w, y: y0 + h * 0.8 }, thickness: 0.8, color: rgb(0.1, 0.6, 0.1), dashArray: [4, 3] });
+    page.drawLine({ start: { x: x0 + w * 0.3, y: y0 }, end: { x: x0 + w * 0.3, y: y0 + h }, thickness: 0.8, color: rgb(0.5, 0.5, 0.5) });
+    const step = w / (data.length - 1);
+    data.forEach((v, i) => {
+      const p = { x: x0 + i * step, y: y0 + (h * v) / 100 };
+      if (i) page.drawLine({ start: { x: x0 + (i - 1) * step, y: y0 + (h * data[i - 1]!) / 100 }, end: p, thickness: 1.5, color: rgb(0.1, 0.3, 0.8) });
+      page.drawCircle({ x: p.x, y: p.y, size: 2.5, color: rgb(0.1, 0.3, 0.8) });
+    });
+    ["01/06", "02/03", "03/03", "03/31"].forEach((d, i) => page.drawText(d, { x: x0 + (i * w) / 3 - 10, y: y0 - 14, size: 7, font }));
+  };
+  graph("Mands for preferred items - % correct", 720, [20, 25, 22, 30, 45, 55, 60, 70, 78, 82, 86]);
+  graph("Responding to name - % correct", 420, [40, 35, 42, 50, 48, 55, 58, 60, 62, 61, 65]);
+  return Buffer.from(await doc.save());
+}

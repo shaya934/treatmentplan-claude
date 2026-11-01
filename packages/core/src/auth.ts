@@ -27,6 +27,7 @@ import type { Role } from "./types";
  */
 
 export type LoginStep =
+  | { step: "new_password"; challenge: string }
   | { step: "mfa"; challenge: string }
   | { step: "mfa_setup"; challenge: string; otpauthUri: string; secret: string }
   | { step: "done"; session: string; user: SessionUser };
@@ -132,27 +133,53 @@ async function finishCognito(idToken: string, meta: RequestMeta): Promise<LoginS
   return issue(u);
 }
 
+/** Map the challenge Cognito returns after a password (or new password) to the next login step. */
+async function cognitoChallenge(r: { ChallengeName?: string; Session?: string }, email: string): Promise<LoginStep> {
+  if (r.ChallengeName === ChallengeNameType.NEW_PASSWORD_REQUIRED) {
+    // First sign-in with the temporary password Cognito emailed.
+    return { step: "new_password", challenge: await signChallenge({ kind: "cognito_new_password", s: r.Session!, email }, env().sessionSecret) };
+  }
+  if (r.ChallengeName === ChallengeNameType.SOFTWARE_TOKEN_MFA) {
+    return { step: "mfa", challenge: await signChallenge({ kind: "cognito_verify", s: r.Session!, email }, env().sessionSecret) };
+  }
+  if (r.ChallengeName === ChallengeNameType.MFA_SETUP) {
+    const assoc = await idp().send(new AssociateSoftwareTokenCommand({ Session: r.Session! }));
+    const secret = assoc.SecretCode!;
+    return {
+      step: "mfa_setup",
+      secret,
+      otpauthUri: generateURI({ issuer: "ABA Plan Assistant", label: email, secret }),
+      challenge: await signChallenge({ kind: "cognito_setup", s: assoc.Session!, email }, env().sessionSecret),
+    };
+  }
+  throw new SafeError("MFA is required for every account.", 401);
+}
+
 async function cognitoPassword(email: string, password: string, meta: RequestMeta): Promise<LoginStep> {
   try {
     const r = await idp().send(new InitiateAuthCommand({ AuthFlow: AuthFlowType.USER_PASSWORD_AUTH, ClientId: env().cognitoClientId, AuthParameters: { USERNAME: email, PASSWORD: password } }));
-    if (r.ChallengeName === ChallengeNameType.SOFTWARE_TOKEN_MFA) {
-      return { step: "mfa", challenge: await signChallenge({ kind: "cognito_verify", s: r.Session!, email }, env().sessionSecret) };
-    }
-    if (r.ChallengeName === ChallengeNameType.MFA_SETUP) {
-      const assoc = await idp().send(new AssociateSoftwareTokenCommand({ Session: r.Session! }));
-      const secret = assoc.SecretCode!;
-      return {
-        step: "mfa_setup",
-        secret,
-        otpauthUri: generateURI({ issuer: "ABA Plan Assistant", label: email, secret }),
-        challenge: await signChallenge({ kind: "cognito_setup", s: assoc.Session!, email }, env().sessionSecret),
-      };
-    }
-    throw new SafeError("MFA is required for every account.", 401);
+    return await cognitoChallenge(r, email);
   } catch (e) {
     if (e instanceof SafeError) throw e;
     await logLogin(await findUserByEmail(email), false, meta);
     throw new SafeError(GENERIC, 401);
+  }
+}
+
+async function cognitoNewPassword(challenge: string, newPassword: string, meta: RequestMeta): Promise<LoginStep> {
+  const c = await verifyChallenge(challenge, env().sessionSecret);
+  if (!c || c.kind !== "cognito_new_password") throw new SafeError("Your sign-in expired. Start again.", 401);
+  const policy = checkPasswordPolicy(newPassword);
+  if (policy) throw new SafeError(policy, 400);
+  try {
+    const r = await idp().send(
+      new RespondToAuthChallengeCommand({ ClientId: env().cognitoClientId, ChallengeName: ChallengeNameType.NEW_PASSWORD_REQUIRED, Session: c.s, ChallengeResponses: { USERNAME: c.email!, NEW_PASSWORD: newPassword } }),
+    );
+    return await cognitoChallenge(r, c.email!);
+  } catch (e) {
+    if (e instanceof SafeError) throw e;
+    await logLogin(await findUserByEmail(c.email ?? ""), false, meta);
+    throw new SafeError("That password could not be set. Start again.", 401);
   }
 }
 
@@ -180,6 +207,12 @@ export async function loginPassword(email: string, password: string, meta: Reque
 
 export async function loginMfa(challenge: string, code: string, meta: RequestMeta): Promise<LoginStep> {
   return env().mode === "aws" ? cognitoMfa(challenge, code, meta) : localMfa(challenge, code, meta);
+}
+
+/** Set a permanent password on first sign-in (Cognito only; local seed users have permanent passwords). */
+export async function loginNewPassword(challenge: string, newPassword: string, meta: RequestMeta): Promise<LoginStep> {
+  if (env().mode !== "aws") throw new SafeError("Your sign-in expired. Start again.", 401);
+  return cognitoNewPassword(challenge, newPassword, meta);
 }
 
 /** Create the identity for a new user. Returns the cognito sub (aws) or a password hash (local). */

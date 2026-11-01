@@ -12,6 +12,7 @@
   "dependencies": {
     "@aba/config": "workspace:*",
     "@aba/core": "workspace:*",
+    "@napi-rs/canvas": "1.0.13",
     "@tiptap/pm": "^2.27.3",
     "@tiptap/react": "^2.27.3",
     "@tiptap/starter-kit": "^2.27.3",

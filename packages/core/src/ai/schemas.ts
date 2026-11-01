@@ -12,6 +12,21 @@ export const ExtractedFact = z.object({
 export type ExtractedFact = z.infer<typeof ExtractedFact>;
 export const ExtractionOutput = z.object({ facts: z.array(ExtractedFact) });
 
+/** Graph reading: one entry per graph found on the page images shown. */
+export const GraphReading = z.object({
+  graphs: z.array(
+    z.object({
+      page: z.number().int().min(1),
+      title: z.string().min(1),
+      summary: z.string().min(1),
+      /** Where the graph sits on the page, as fractions of page width/height (0-1). */
+      bbox: z.object({ x: z.number(), y: z.number(), w: z.number(), h: z.number() }).nullable().optional(),
+      facts: z.array(ExtractedFact.omit({ page: true })),
+    }),
+  ),
+});
+export type GraphReading = z.infer<typeof GraphReading>;
+
 export const AnswerAssessment = z.object({
   complete: z.boolean(),
   follow_up: z.string().nullable().optional(),
@@ -31,6 +46,10 @@ export const SectionOutput = z.object({
   ),
 });
 export type SectionOutput = z.infer<typeof SectionOutput>;
+
+/** Previous-plan import: the content of each field as written in last period's plan. */
+export const ImportOutput = z.object({ fields: z.array(z.object({ field_id: z.string(), value: FieldValueOut })) });
+export type ImportOutput = z.infer<typeof ImportOutput>;
 
 export const ReviewOutput = z.object({
   conflicts: z.array(z.object({ field_id: z.string(), detail: z.string() })),
@@ -68,6 +87,10 @@ export const TemplateOp = z.object({
 export type TemplateOp = z.infer<typeof TemplateOp>;
 export const TemplateDiffOutput = z.object({ ops: z.array(TemplateOp), summary: z.string() });
 export type TemplateDiffOutput = z.infer<typeof TemplateDiffOutput>;
+
+/** First pass of Word-template conversion: the sections in order, with each heading as written. */
+export const TemplateOutline = z.object({ sections: z.array(z.object({ title: z.string().min(1), heading: z.string().min(1) })) });
+export type TemplateOutline = z.infer<typeof TemplateOutline>;
 
 export const DocxTemplateOutput = z.object({
   sections: z.array(

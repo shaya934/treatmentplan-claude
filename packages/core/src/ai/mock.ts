@@ -255,7 +255,55 @@ const docxTemplate: MockHandler = (input) => {
   return { sections: sections.filter((s) => s.fields.length) };
 };
 
+/** Template outline: the same heading rule as docxTemplate, returned as section headings. */
+const templateOutline: MockHandler = (input) => {
+  const { text } = input as { text: string };
+  const sections = text
+    .split(/\n/)
+    .map((l) => l.trim())
+    .filter((line) => line && line.length < 60 && !/[.:]$/.test(line) && /^[A-Z]/.test(line) && line.split(" ").length <= 7 && !line.includes(":"))
+    .map((line) => ({ title: line, heading: line }));
+  return { sections };
+};
+
+/** Previous-plan import: copy any "Field label: text" line for text-like fields. */
+const importSection: MockHandler = (input) => {
+  const { fields, pages } = input as { fields: Field[]; pages: PageText[] };
+  const lines = pages.flatMap((p) => p.text.split("\n"));
+  const out: Array<{ field_id: string; value: string }> = [];
+  for (const f of fields) {
+    if (!["text", "narrative", "date", "number", "select"].includes(f.type)) continue;
+    const label = f.label.toLowerCase();
+    const line = lines.find((l) => l.toLowerCase().startsWith(`${label}:`));
+    const value = line?.slice(f.label.length + 1).trim();
+    if (value) out.push({ field_id: f.id, value });
+  }
+  return { fields: out };
+};
+
+/**
+ * Graph reading: the mock cannot look at images, so it "finds" one graph per page only in
+ * files named like graph exports (learning trees, graphs); other files have none, as a
+ * scanned letter would for the real model.
+ */
+const readGraphs: MockHandler = (input) => {
+  const { pages, filename } = input as { pages: number[]; filename: string };
+  if (!/graph|learning/i.test(filename)) return { graphs: [] };
+  return {
+    graphs: pages.map((page) => ({
+      page,
+      title: `Program graph on page ${page}`,
+      summary: "Mock reading (local mode): the trend is not analyzed; check the graph.",
+      bbox: { x: 0.1, y: 0.05, w: 0.8, h: 0.4 },
+      facts: [{ fact_text: `Graph: program trend on page ${page} (mock reading)`, category: "rate", value: null, unit: null, source_date: null }],
+    })),
+  };
+};
+
 export const mockHandlers: Record<string, MockHandler> = {
+  import_section: importSection,
+  record_graphs: readGraphs,
+  template_outline: templateOutline,
   record_facts: extract,
   assess_answer: assessAnswer,
   write_section: writeSection,

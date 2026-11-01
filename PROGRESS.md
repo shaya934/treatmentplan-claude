@@ -5,7 +5,7 @@ Built 2026-10-26 in one session, following the spec phase by phase. All developm
 ## Blockers (owner action needed)
 
 1. **No usable AWS credentials in the build environment.** STS rejected the provided keys (`InvalidClientTokenId`), so **`cdk deploy` (dev) was not run** and **Bedrock / Textract / Transcribe / Cognito were not called live**. All AWS paths are written against the AWS SDK v3 and are type-checked. CDK for dev and prod **synthesizes**, and its templates are assertion-tested. To deploy dev:
-   - accept the AWS BAA in AWS Artifact; enable Bedrock model access for the Claude 5.5 models in us-east-1 and confirm the IDs in `config/models.ts`
+   - accept the AWS BAA in AWS Artifact; enable Bedrock model access for the Claude 5.5 models (US cross-region profiles, used from us-east-2) and confirm the IDs in `config/models.ts`
    - set `domainName` and `alarmEmail` (and optionally `hostedZoneId`/`hostedZoneName`) under `aba:dev` in `infra/cdk.json`
    - follow docs/AWS_SETUP.md (step-by-step), which ends with `pnpm cdk:deploy:dev`
 2. **Docker image not built here.** The sandbox's network proxy rejects Debian's plain-HTTP package mirrors, so `docker build` could not finish in this environment. The Dockerfile is standard (node:22-bookworm-slim, pnpm, LibreOffice in the worker target). The first `cdk deploy` builds it on a normal machine or in CI.
